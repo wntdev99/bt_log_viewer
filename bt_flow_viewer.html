@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<!--
+  bt_flow_viewer.html — BT 실행 흐름 시각 재생 뷰어 (MVP)
+
+  bt_flow_check.py export 로 만든 session.json 을 드롭(또는 선택)하면
+  트리 구조를 렌더하고, 하단 스크러버로 시점별 노드 상태를 색으로 재생한다.
+
+  의존성 0 (vanilla JS + SVG). file:// 더블클릭 실행. 인터넷 불필요.
+
+  설계: core(stateAt 등 순수 로직) / view(렌더) 분리.
+        expected 슬롯 기반 "기대 vs 실제 비교" 오버레이는 후속 확장 자리.
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>BT Flow Viewer</title>
+<style>
+  :root {
+    --bg:#1e1f26; --panel:#272935; --line:#4a4d5e; --text:#d8dae5; --muted:#888ca0;
+    --idle:#3a3d4a; --running:#f5c542; --success:#4caf68; --failure:#e0584b; --skipped:#5a5d6e;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:'Segoe UI',system-ui,sans-serif; font-size:13px; overflow:hidden; }
+  #app { display:flex; flex-direction:column; height:100vh; }
+  header { padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:14px; margin:0; font-weight:600; color:#fff; }
+  header .meta { color:var(--muted); font-size:12px; }
+  #drop { color:var(--muted); }
+  #drop input { color:var(--text); }
+  #stage { flex:1; position:relative; overflow:hidden; }
+  svg { width:100%; height:100%; cursor:grab; }
+  svg.dragging { cursor:grabbing; }
+  .edge { stroke:var(--line); stroke-width:1.2; fill:none; }
+  .node rect { stroke:var(--line); stroke-width:1.2; rx:4; }
+  .node text { fill:var(--text); font-size:11px; dominant-baseline:middle; }
+  .node .type { fill:var(--muted); font-size:9px; }
+  .node.sel rect { stroke:#fff; stroke-width:2.5; }
+  footer { background:var(--panel); border-top:1px solid var(--line); padding:10px 14px; }
+  .ctrls { display:flex; align-items:center; gap:12px; }
+  button { background:#34374a; color:var(--text); border:1px solid var(--line);
+    border-radius:5px; padding:5px 12px; cursor:pointer; font-size:13px; }
+  button:hover { background:#3f4358; }
+  input[type=range] { flex:1; }
+  .tl { font-variant-numeric:tabular-nums; color:var(--muted); font-size:12px; white-space:nowrap; }
+  .legend { display:flex; gap:12px; margin-top:8px; font-size:11px; color:var(--muted); align-items:center; }
+  .legend i { display:inline-block; width:11px; height:11px; border-radius:2px; margin-right:4px;
+    vertical-align:-1px; border:1px solid var(--line); }
+  #info { position:absolute; top:10px; right:10px; background:var(--panel); border:1px solid var(--line);
+    border-radius:6px; padding:10px 12px; max-width:340px; font-size:12px; display:none; }
+  #info b { color:#fff; } #info .k { color:var(--muted); }
+  #ticklog { color:var(--muted); font-size:11px; margin-top:6px; height:15px; overflow:hidden; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>BT Flow Viewer</h1>
+    <span id="drop">session.json 드롭 또는 <input type="file" id="file" accept=".json"></span>
+    <span class="meta" id="meta"></span>
+  </header>
+  <div id="stage">
+    <svg id="svg"><g id="root"></g></svg>
+    <div id="info"></div>
+  </div>
+  <footer>
+    <div class="ctrls">
+      <button id="play">▶︎ 재생</button>
+      <button id="rew">⏮</button>
+      <input type="range" id="slider" min="0" max="0" value="0">
+      <span class="tl" id="tl">0 / 0</span>
+      <select id="speed" title="재생 속도">
+        <option value="120">8×</option><option value="250">4×</option>
+        <option value="500" selected>2×</option><option value="1000">1×</option>
+      </select>
+    </div>
+    <div id="ticklog"></div>
+    <div class="legend">
+      <span><i style="background:var(--running)"></i>RUNNING</span>
+      <span><i style="background:var(--success)"></i>SUCCESS</span>
+      <span><i style="background:var(--failure)"></i>FAILURE</span>
+      <span><i style="background:var(--skipped)"></i>SKIPPED</span>
+      <span><i style="background:var(--idle)"></i>IDLE</span>
+      <span style="margin-left:auto">휠=줌, 드래그=이동, 노드 클릭=상세</span>
+    </div>
+  </footer>
+</div>
+<script>
+// ============================ CORE (순수 로직, UI 무관) ============================
+const STATE = {0:'IDLE',1:'RUNNING',2:'SUCCESS',3:'FAILURE',4:'SKIPPED'};
+const COLOR = {0:'var(--idle)',1:'var(--running)',2:'var(--success)',3:'var(--failure)',4:'var(--skipped)'};
+
+// uid 별 (transitionIndex, state) 시퀀스 — stateAt 의 인덱스
+function buildSeq(timeline) {
+  const seq = new Map();
+  timeline.forEach((tr, i) => {
+    const uid = tr[1], st = tr[2];
+    if (!seq.has(uid)) seq.set(uid, []);
+    seq.get(uid).push([i, st]);
+  });
+  return seq;
+}
+// transition index idx 시점에서 uid 의 상태 (그 이하 마지막 전이). 없으면 IDLE(0).
+function stateAt(seq, uid, idx) {
+  const arr = seq.get(uid);
+  if (!arr) return 0;
+  let lo = 0, hi = arr.length - 1, ans = -1;
+  while (lo <= hi) { const m = (lo+hi)>>1; if (arr[m][0] <= idx) { ans = m; lo = m+1; } else hi = m-1; }
+  return ans < 0 ? 0 : arr[ans][1];
+}
+
+// 트리 레이아웃 (가로: depth→x, 형제→y). 리프 카운터 기반 tidy 간이판.
+function layout(root) {
+  const NX = 215, NY = 30; let leaf = 0; const nodes = [], edges = [];
+  (function walk(n, depth, parent) {
+    n._x = depth * NX;
+    const kids = n.children || [];
+    if (kids.length === 0) { n._y = (leaf++) * NY; }
+    else { kids.forEach(c => walk(c, depth+1, n)); n._y = (kids[0]._y + kids[kids.length-1]._y)/2; }
+    nodes.push(n);
+    if (parent) edges.push([parent, n]);
+  })(root, 0, null);
+  return { nodes, edges };
+}
+
+// ============================ VIEW (렌더 + 상호작용) ============================
+let DATA=null, SEQ=null, NODES=[], EDGES=[], rectByUid=new Map(), playTimer=null, selUid=null;
+const svg=document.getElementById('svg'), gRoot=document.getElementById('root');
+const slider=document.getElementById('slider'), tl=document.getElementById('tl');
+const info=document.getElementById('info'), ticklog=document.getElementById('ticklog');
+
+function load(data) {
+  DATA = data; SEQ = buildSeq(data.timeline);
+  const lo = layout(data.tree); NODES = lo.nodes; EDGES = lo.edges;
+  rectByUid.clear(); gRoot.innerHTML='';
+  const NS='http://www.w3.org/2000/svg';
+  // edges
+  EDGES.forEach(([p,c])=>{
+    const path=document.createElementNS(NS,'path');
+    const x1=p._x+170, y1=p._y, x2=c._x, y2=c._y, mx=(x1+x2)/2;
+    path.setAttribute('d',`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+    path.setAttribute('class','edge'); gRoot.appendChild(path);
+  });
+  // nodes
+  NODES.forEach(n=>{
+    const g=document.createElementNS(NS,'g'); g.setAttribute('class','node');
+    g.setAttribute('transform',`translate(${n._x},${n._y-12})`);
+    const rect=document.createElementNS(NS,'rect');
+    rect.setAttribute('width',170); rect.setAttribute('height',24);
+    rect.setAttribute('fill',COLOR[0]); g.appendChild(rect);
+    const t1=document.createElementNS(NS,'text');
+    t1.setAttribute('x',8); t1.setAttribute('y',9); t1.setAttribute('class','name');
+    const label = n.type==='SubTree' ? ('▸ '+(n.subtree||'SubTree')) : (n.name||n.type);
+    t1.textContent = label.length>22 ? label.slice(0,21)+'…' : label;
+    g.appendChild(t1);
+    const t2=document.createElementNS(NS,'text');
+    t2.setAttribute('x',8); t2.setAttribute('y',18); t2.setAttribute('class','type');
+    t2.textContent = (n.type==='SubTree'?'SubTree':n.type)+'  #'+n.uid;
+    g.appendChild(t2);
+    if(n.uid!=null){ rectByUid.set(n.uid,{rect,g,node:n}); g.style.cursor='pointer';
+      g.addEventListener('click',e=>{e.stopPropagation(); selectNode(n.uid);}); }
+    gRoot.appendChild(g);
+  });
+  slider.max = data.timeline.length-1; slider.value=0;
+  fitView();
+  document.getElementById('meta').textContent =
+    `${data.meta.tree} · session ${data.meta.session} · ${data.meta.date} · 노드 ${Object.keys(data.nodes).length} · 전이 ${data.meta.count} · ${((data.meta.t1-data.meta.t0)/1e6).toFixed(1)}s`;
+  render(0);
+}
+
+function render(idx) {
+  idx = +idx;
+  rectByUid.forEach((o,uid)=> o.rect.setAttribute('fill', COLOR[stateAt(SEQ,uid,idx)]));
+  const tr = DATA.timeline[idx];
+  const relS = tr ? ((tr[0]-DATA.meta.t0)/1e6).toFixed(3) : '0';
+  tl.textContent = `${idx} / ${DATA.timeline.length-1}   t+${relS}s`;
+  if (tr) {
+    const path = DATA.nodes[tr[1]] || ('#'+tr[1]);
+    ticklog.textContent = `t+${relS}s   ${STATE[tr[2]]}   ${path}` + (tr[4]?`   [${tr[4]}]`:'');
+  }
+  if (selUid!=null) refreshInfo(idx);
+}
+
+function selectNode(uid){
+  selUid=uid;
+  rectByUid.forEach((o,u)=> o.g.classList.toggle('sel', u===uid));
+  info.style.display='block'; refreshInfo(+slider.value);
+}
+function refreshInfo(idx){
+  const path = DATA.nodes[selUid] || ('#'+selUid);
+  const arr = (SEQ.get(selUid)||[]);
+  const cur = stateAt(SEQ, selUid, idx);
+  const counts={1:0,2:0,3:0,4:0}; arr.forEach(([,s])=>{ if(counts[s]!=null) counts[s]++; });
+  info.innerHTML = `<b>${path}</b><br>`+
+    `<span class="k">현재 상태:</span> ${STATE[cur]}<br>`+
+    `<span class="k">전이 횟수:</span> ${arr.length}  `+
+    `(<span style="color:var(--success)">S ${counts[2]}</span> / `+
+    `<span style="color:var(--failure)">F ${counts[3]}</span> / `+
+    `<span style="color:var(--running)">R ${counts[1]}</span> / `+
+    `<span style="color:var(--skipped)">K ${counts[4]}</span>)`;
+}
+
+// 재생
+function play(){
+  if(playTimer){ stop(); return; }
+  document.getElementById('play').textContent='⏸ 일시정지';
+  const dt=+document.getElementById('speed').value;
+  playTimer=setInterval(()=>{
+    let v=+slider.value; if(v>=+slider.max){ stop(); return; }
+    slider.value=v+1; render(slider.value);
+  }, dt/4);
+}
+function stop(){ clearInterval(playTimer); playTimer=null; document.getElementById('play').textContent='▶︎ 재생'; }
+
+document.getElementById('play').onclick=play;
+document.getElementById('rew').onclick=()=>{ stop(); slider.value=0; render(0); };
+slider.oninput=()=>{ render(slider.value); };
+document.getElementById('speed').onchange=()=>{ if(playTimer){ stop(); play(); } };
+
+// 줌/팬
+let vb={x:-40,y:-20,w:1400,h:800};
+function applyVB(){ svg.setAttribute('viewBox',`${vb.x} ${vb.y} ${vb.w} ${vb.h}`); }
+function fitView(){
+  const xs=NODES.map(n=>n._x), ys=NODES.map(n=>n._y);
+  const minX=Math.min(...xs)-40, maxX=Math.max(...xs)+220;
+  const minY=Math.min(...ys)-30, maxY=Math.max(...ys)+30;
+  vb={x:minX,y:minY,w:Math.max(maxX-minX,400),h:Math.max(maxY-minY,300)}; applyVB();
+}
+svg.addEventListener('wheel',e=>{ e.preventDefault();
+  const f=e.deltaY>0?1.12:0.89; const r=svg.getBoundingClientRect();
+  const mx=vb.x+(e.clientX-r.left)/r.width*vb.w, my=vb.y+(e.clientY-r.top)/r.height*vb.h;
+  vb.x=mx-(mx-vb.x)*f; vb.y=my-(my-vb.y)*f; vb.w*=f; vb.h*=f; applyVB();
+},{passive:false});
+let pan=null;
+svg.addEventListener('mousedown',e=>{ pan={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y}; svg.classList.add('dragging'); });
+window.addEventListener('mousemove',e=>{ if(!pan)return; const r=svg.getBoundingClientRect();
+  vb.x=pan.vx-(e.clientX-pan.x)/r.width*vb.w; vb.y=pan.vy-(e.clientY-pan.y)/r.height*vb.h; applyVB(); });
+window.addEventListener('mouseup',()=>{ pan=null; svg.classList.remove('dragging'); });
+svg.addEventListener('click',()=>{ selUid=null; info.style.display='none';
+  rectByUid.forEach(o=>o.g.classList.remove('sel')); });
+
+// 파일 로드 (드롭 + 선택)
+function readFile(f){ const r=new FileReader(); r.onload=()=>{ try{ load(JSON.parse(r.result)); }
+  catch(err){ alert('JSON 파싱 실패: '+err); } }; r.readAsText(f); }
+document.getElementById('file').onchange=e=>{ if(e.target.files[0]) readFile(e.target.files[0]); };
+window.addEventListener('dragover',e=>e.preventDefault());
+window.addEventListener('drop',e=>{ e.preventDefault(); if(e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]); });
+
+// URL ?data=경로 자동 로드 (http 서버로 열 때)
+const qs=new URLSearchParams(location.search);
+if(qs.get('data')) fetch(qs.get('data')).then(r=>r.json()).then(load).catch(()=>{});
+</script>
+</body>
+</html>
