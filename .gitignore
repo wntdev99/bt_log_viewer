@@ -1,0 +1,5 @@
+node_modules/
+*.btlog
+*.db3
+*.session.json
+.playwright-test/

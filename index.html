@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<!--
+  bt_log_viewer v2 — BT 실행 로그 시각 분석/디버깅 도구
+  · 의존성 0 (vanilla JS, classic script) → file:// 더블클릭 또는 serve.sh 둘 다 동작
+  · 확장: app/panels/*.js(패널), app/features/*.js(디버그 토글)에 파일 추가 + 등록 1줄
+  · 데이터: .btlog(FileLogger2) 직접 / .session.json(bt_flow_check.py export)
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BT Flow Viewer</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<link rel="stylesheet" href="app/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- 상단 바 -->
+  <header id="topbar">
+    <span class="brand"><span class="logo">BT</span> Flow Viewer</span>
+    <button class="btn" id="openBtn">📂 열기</button>
+    <input type="file" id="fileInput" accept=".btlog,.json" multiple hidden>
+    <label id="sessionWrap" class="field" style="display:none"><span class="muted">세션</span>
+      <select class="select" id="sessionSel"></select></label>
+    <button class="btn" id="mergeBtn" style="display:none" title="로드된 세션을 통합 타임라인으로 병합">⛓ 합쳐보기</button>
+    <span class="topbar-spacer"></span>
+    <span class="meta-chip" id="metaChip"></span>
+    <button class="btn ghost" id="paletteBtn" title="명령 팔레트 (⌘K)">⌘K</button>
+    <button class="btn icon ghost" id="settingsBtn" title="디버그 기능 설정">⚙</button>
+    <button class="btn icon ghost" id="dockToggle" title="패널 접기/펼치기">⇥</button>
+  </header>
+
+  <!-- 그래프 캔버스 -->
+  <div id="stage">
+    <svg id="svg"></svg>
+    <div class="stage-tools">
+      <button class="btn icon" id="fitBtn" title="화면 맞춤 (f)">🎯</button>
+    </div>
+    <div id="minimap"><svg id="minimapSvg"></svg></div>
+    <div id="toast" class="toast"></div>
+    <div id="empty"><div class="card">
+      <div class="big">🌳</div>
+      <h2>BT 실행 로그를 불러오세요</h2>
+      <p><b>.btlog</b> 파일을 이 화면에 끌어다 놓거나<br><b>열기</b> 버튼으로 선택하세요.<br>
+        여러 개를 올린 뒤 <b>합쳐보기</b>로 레이어를 겹쳐 볼 수 있습니다.</p>
+      <button class="btn primary" onclick="document.getElementById('fileInput').click()">📂 파일 선택</button>
+    </div></div>
+  </div>
+
+  <!-- 우측 도크 (패널) -->
+  <aside id="dock">
+    <div class="dock-tabs" id="dockTabs"></div>
+    <div class="dock-body" id="dockBody"></div>
+  </aside>
+
+  <!-- 하단 트랜스포트 -->
+  <footer id="transport">
+    <div class="density" id="density"><svg id="densitySvg"></svg></div>
+    <div class="transport-row">
+      <button class="btn icon" id="playBtn" title="재생 (Space)">▶</button>
+      <button class="btn icon" id="rewBtn" title="처음으로">⏮</button>
+      <button class="btn icon" id="stepBack" title="이전 전이 (←)">◀</button>
+      <input type="range" id="scrubber" min="0" max="0" value="0">
+      <button class="btn icon" id="stepFwd" title="다음 전이 (→)">▶|</button>
+      <span class="tl" id="tl">0 / 0</span>
+      <label class="field"><span class="muted">방식</span>
+        <select class="select" id="modeSel" title="전이별=전이 생략 없이 1개씩 / 실시간=wall-clock 비례">
+          <option value="tick" selected>전이별</option><option value="realtime">실시간</option></select></label>
+      <label class="field"><span class="muted">배속</span>
+        <select class="select" id="speedSel">
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option><option value="2">2×</option>
+          <option value="4">4×</option><option value="8">8×</option>
+          <option value="16">16×</option><option value="32">32×</option>
+          <option value="64">64×</option><option value="200">200×</option></select></label>
+      <button class="btn icon" id="loopBtn" title="구간 반복(A→B)">🔁</button>
+      <button class="btn icon" id="bmBtn" title="북마크 (b)">🔖</button>
+    </div>
+    <div class="tick-readout" id="tickReadout"></div>
+  </footer>
+</div>
+
+<!-- 설정 시트 (디버그 토글) -->
+<div class="overlay" id="settingsOverlay">
+  <div class="sheet">
+    <header>⚙ 디버그 기능 <span class="muted" style="font-weight:400;font-size:12px">— 필요할 때만 켜세요</span>
+      <span style="flex:1"></span><button class="btn ghost icon" data-close>✕</button></header>
+    <div class="body" id="settingsBody"></div>
+  </div>
+</div>
+
+<!-- 명령 팔레트 -->
+<div class="overlay" id="paletteOverlay">
+  <div class="sheet">
+    <input class="cmd-input" id="cmdInput" placeholder="명령 검색…  (액션 · 패널 · 토글)">
+    <div class="body" id="cmdResults"></div>
+  </div>
+</div>
+
+<!-- 모듈 로드: core → ui → panels → features → app(마지막) -->
+<script src="app/core/btlog.js"></script>
+<script src="app/core/tree.js"></script>
+<script src="app/core/timeline.js"></script>
+<script src="app/core/session.js"></script>
+<script src="app/core/diff.js"></script>
+<script src="app/core/store.js"></script>
+<script src="app/ui/registry.js"></script>
+<script src="app/ui/graph.js"></script>
+<script src="app/ui/minimap.js"></script>
+<script src="app/ui/timeline_ui.js"></script>
+<script src="app/panels/inspector.js"></script>
+<script src="app/panels/stats.js"></script>
+<script src="app/panels/events.js"></script>
+<script src="app/panels/blackboard.js"></script>
+<script src="app/panels/search.js"></script>
+<script src="app/panels/diff_panel.js"></script>
+<script src="app/features/debug_features.js"></script>
+<script src="app/ui/app.js"></script>
+</body>
+</html>
