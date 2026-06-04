@@ -31,10 +31,15 @@
         let spc; try { spc = JSON.parse(spec.value); } catch (e) { chkres.innerHTML = `<div class="tag fail">JSON 오류: ${e.message}</div>`; return; }
         const results = C.evalInvariants(s, spc);
         const pass = results.filter(r => r.ok).length;
-        chkres.innerHTML = `<div style="margin-bottom:6px"><b>${pass}/${results.length} 통과</b></div>` +
-          results.map(r => `<div class="row" style="gap:6px;padding:4px 0;border-bottom:1px solid var(--line)">
+        chkres.innerHTML = `<div style="margin-bottom:6px"><b>${pass}/${results.length} 통과</b> <span class="muted">· 행 클릭=그래프 하이라이트</span></div>` +
+          results.map((r, i) => `<div class="row chk-row" data-i="${i}" style="gap:6px;padding:4px 0;border-bottom:1px solid var(--line);cursor:pointer">
             <span class="tag ${r.ok ? 'succ' : 'fail'}">${r.ok ? 'PASS' : 'FAIL'}</span>
             <span style="flex:1"><b>${r.name}</b><div class="muted mono" style="font-size:10px">${r.detail}</div></span></div>`).join('');
+        // 행 클릭 → 해당 불변식의 node 패턴(LIKE)을 검색어로 → 그래프에 일치 노드 하이라이트
+        chkres.querySelectorAll('.chk-row').forEach(row => row.onclick = () => {
+          const r = results[+row.dataset.i], pat = (r.node || '').replace(/%/g, '').trim();
+          if (pat) { store.setSearch(pat); BTV.toast(`그래프에서 "${pat}" 하이라이트 (${store.state.searchHits.length}개)`); }
+        });
       }
       function fillCmp() {
         cmpSel.innerHTML = store.state.sessions.map((s, i) => `<option value="${i}" ${i === store.state.activeIndex ? 'disabled' : ''}>${s.meta.tree} · ${s.meta.file || ('s' + s.meta.session)}</option>`).join('');
