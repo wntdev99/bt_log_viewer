@@ -83,6 +83,7 @@
       { ic: '⛓', label: '세션 합쳐보기(병합)', sub: '레이어 통합 타임라인', run: doMerge },
       { ic: '💾', label: '현재 세션 JSON 저장', sub: 'export', run: exportJson },
       { ic: '🖼', label: '트리 SVG 저장', sub: 'snapshot', run: exportSVG },
+      { ic: '📸', label: '트리 PNG 저장', sub: '현재 화면', run: exportPNG },
       { ic: '⚙', label: '디버그 기능 설정 열기', sub: '토글', run: () => openSheet('settings') },
     ];
     BTV.panels.forEach(p => a.push({ ic: p.icon || '▦', label: '패널: ' + p.title, sub: 'dock', run: () => activatePanel(p.id) }));
@@ -124,10 +125,36 @@
     const s = store.active; if (!s) { BTV.toast('세션 없음'); return; }
     download((s.meta.tree || 'session') + '.session.json', JSON.stringify(s), 'application/json'); BTV.toast('JSON 저장');
   }
-  function exportSVG() {
-    const g = BTV.graph; if (!g) return;
+  const SVG_VARS = ['--surface', '--idle-line', '--running', '--success', '--failure', '--skipped',
+    '--running-weak', '--success-weak', '--failure-weak', '--skipped-weak', '--accent', '--accent-weak',
+    '--line', '--line-2', '--text', '--text-3'];
+  function svgString() {
+    const g = BTV.graph; if (!g) return null;
     const clone = g.svg.cloneNode(true); clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    download((store.active ? store.active.meta.tree : 'tree') + '.svg', new XMLSerializer().serializeToString(clone), 'image/svg+xml'); BTV.toast('SVG 저장');
+    // 독립 SVG 에선 var(--x) 가 안 풀리므로 해석된 값을 <style> 로 주입.
+    const cs = getComputedStyle(document.documentElement);
+    const decl = SVG_VARS.map(v => `${v}:${cs.getPropertyValue(v).trim()}`).join(';');
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    style.textContent = `svg{${decl}} text{font-family:sans-serif}`;
+    clone.insertBefore(style, clone.firstChild);
+    return new XMLSerializer().serializeToString(clone);
+  }
+  function exportSVG() {
+    const s = svgString(); if (!s) return;
+    download((store.active ? store.active.meta.tree : 'tree') + '.svg', s, 'image/svg+xml'); BTV.toast('SVG 저장');
+  }
+  function exportPNG() {
+    const g = BTV.graph; if (!g) return;
+    const vb = g.vb, scale = 2, str = svgString();
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement('canvas'); cv.width = vb.w * scale; cv.height = vb.h * scale;
+      const cx = cv.getContext('2d'); cx.fillStyle = '#FFFFFF'; cx.fillRect(0, 0, cv.width, cv.height);
+      cx.drawImage(img, 0, 0, cv.width, cv.height);
+      cv.toBlob(b => { const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = (store.active ? store.active.meta.tree : 'tree') + '.png'; a.click(); URL.revokeObjectURL(u); BTV.toast('PNG 저장'); });
+    };
+    img.onerror = () => BTV.toast('PNG 변환 실패 (SVG 로 저장하세요)');
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(str);
   }
 
   /* ---- 키보드 ---- */
