@@ -76,9 +76,13 @@
     <div class="ctrls">
       <button id="play">▶︎ 재생</button>
       <button id="rew">⏮</button>
+      <button id="stepb" title="이전 전이 (1틱)">◀</button>
       <input type="range" id="slider" min="0" max="0" value="0">
+      <button id="stepf" title="다음 전이 (1틱)">▶</button>
       <span class="tl" id="tl">0 / 0</span>
-      <select id="speed" title="재생 속도 (실시간 대비)">
+      <select id="speed" title="재생 속도 (실시간 대비). 전이별=1틱씩 가장 느리게">
+        <option value="tick">전이별(느림)</option>
+        <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
         <option value="1">1×</option><option value="2">2×</option>
         <option value="4">4×</option><option value="8" selected>8×</option>
         <option value="16">16×</option><option value="32">32×</option>
@@ -93,7 +97,7 @@
       <span><i style="background:var(--failure)"></i>FAILURE</span>
       <span><i style="background:var(--skipped)"></i>SKIPPED</span>
       <span><i style="background:var(--idle)"></i>IDLE</span>
-      <span style="margin-left:auto">휠=줌, 드래그=이동, 노드 클릭=상세</span>
+      <span style="margin-left:auto">휠=줌, 드래그=이동, 노드 클릭=상세 · ←/→=한 틱씩, Space=재생/정지</span>
     </div>
   </footer>
 </div>
@@ -317,31 +321,44 @@ function refreshInfo(idx){
     `<span style="color:var(--skipped)">K ${counts[4]}</span>)`;
 }
 
-// 재생 — wall-clock 비례. 매 프레임(FRAME ms)마다 log-time 을 speed× 만큼 전진시키고
-//   그 시각 이하 마지막 전이로 점프. 전이가 26k 든 3개든 "실제 경과시간/배속" 으로 재생.
-//   speed=0(최대): log-time 을 무시하고 전이 인덱스를 큰 폭으로 직접 전진.
-const FRAME=50;
+// 재생 모드:
+//   'tick'   — 전이별. 프레임당 정확히 1전이 (TICKMS 간격) → 가장 느리게, 개별 틱 관찰.
+//   0(최대)  — log-time 무시, 인덱스 큰 폭 전진 (길이 무관 ~0.75초 완주).
+//   그 외 배율 — wall-clock 비례. 매 프레임(FRAME ms) log-time 을 speed× 전진 후
+//               그 시각 이하 마지막 전이로 점프. (0.25× 같은 슬로모도 동일 식)
+const FRAME=50, TICKMS=140;   // TICKMS: 전이별 모드 ~7전이/초 (눈으로 따라갈 속도)
 function play(){
   if(playTimer){ stop(); return; }
   if(!DATA || !DATA.timeline.length) return;
   document.getElementById('play').textContent='⏸ 일시정지';
-  const speed=+document.getElementById('speed').value;
+  const sv=document.getElementById('speed').value, perTick=(sv==='tick'), speed=+sv;
   let clock = DATA.timeline[+slider.value][0];           // 현재 위치의 log-time 부터
-  const maxStep = Math.max(1, Math.ceil(DATA.timeline.length/15));   // 최대모드: 길이 무관 ~0.75초 완주
+  const maxStep = Math.max(1, Math.ceil(DATA.timeline.length/15));
   playTimer=setInterval(()=>{
     let v=+slider.value; if(v>=+slider.max){ stop(); return; }
     let idx;
-    if(speed===0){ idx=Math.min(v+maxStep, +slider.max); }
-    else { clock += speed*FRAME*1000; idx=idxAtTime(DATA.timeline, clock); }   // ms→us
-    if(idx<=v) idx=v+1;                                  // 희소 구간에서도 최소 1전이 전진
+    if(perTick){ idx=v+1; }                              // 전이별: 1틱씩
+    else if(speed===0){ idx=Math.min(v+maxStep, +slider.max); }
+    else { clock += speed*FRAME*1000; idx=idxAtTime(DATA.timeline, clock);  // ms→us
+           if(idx<=v) idx=v+1; }                         // 희소 구간에서도 최소 1전이 전진
     slider.value=idx; render(idx);
-  }, FRAME);
+  }, perTick ? TICKMS : FRAME);
 }
+// 단일 전이 수동 스텝 (재생 정지 후 ±1) — 틱 단위 정밀 관찰.
+function step(d){ stop(); let v=Math.min(Math.max(+slider.value+d,0),+slider.max);
+  slider.value=v; render(v); }
 function stop(){ clearInterval(playTimer); playTimer=null; document.getElementById('play').textContent='▶︎ 재생'; }
 
 document.getElementById('play').onclick=play;
 document.getElementById('rew').onclick=()=>{ stop(); slider.value=0; render(0); };
-slider.oninput=()=>{ render(slider.value); };
+document.getElementById('stepb').onclick=()=>step(-1);
+document.getElementById('stepf').onclick=()=>step(1);
+slider.oninput=()=>{ stop(); render(slider.value); };
+// 키보드: ←/→ 한 전이씩, Space 재생/정지
+window.addEventListener('keydown',e=>{ if(!DATA) return;
+  if(e.key==='ArrowRight'){ e.preventDefault(); step(1); }
+  else if(e.key==='ArrowLeft'){ e.preventDefault(); step(-1); }
+  else if(e.key===' '){ e.preventDefault(); play(); } });
 document.getElementById('speed').onchange=()=>{ if(playTimer){ stop(); play(); } };
 
 // 줌/팬
