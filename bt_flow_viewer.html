@@ -78,9 +78,12 @@
       <button id="rew">⏮</button>
       <input type="range" id="slider" min="0" max="0" value="0">
       <span class="tl" id="tl">0 / 0</span>
-      <select id="speed" title="재생 속도">
-        <option value="120">8×</option><option value="250">4×</option>
-        <option value="500" selected>2×</option><option value="1000">1×</option>
+      <select id="speed" title="재생 속도 (실시간 대비)">
+        <option value="1">1×</option><option value="2">2×</option>
+        <option value="4">4×</option><option value="8" selected>8×</option>
+        <option value="16">16×</option><option value="32">32×</option>
+        <option value="64">64×</option><option value="200">200×</option>
+        <option value="0">최대</option>
       </select>
     </div>
     <div id="ticklog"></div>
@@ -108,6 +111,13 @@ function buildSeq(timeline) {
     seq.get(uid).push([i, st]);
   });
   return seq;
+}
+// log-time(epoch-us) t 이하의 마지막 전이 인덱스. t 가 첫 전이 이전이면 0.
+//   재생을 wall-clock 비례로 돌리기 위한 시각→인덱스 변환 (이분 탐색).
+function idxAtTime(timeline, t) {
+  let lo = 0, hi = timeline.length - 1, ans = 0;
+  while (lo <= hi) { const m = (lo+hi)>>1; if (timeline[m][0] <= t) { ans = m; lo = m+1; } else hi = m-1; }
+  return ans;
 }
 // transition index idx 시점에서 uid 의 상태 (그 이하 마지막 전이). 없으면 IDLE(0).
 function stateAt(seq, uid, idx) {
@@ -307,15 +317,25 @@ function refreshInfo(idx){
     `<span style="color:var(--skipped)">K ${counts[4]}</span>)`;
 }
 
-// 재생
+// 재생 — wall-clock 비례. 매 프레임(FRAME ms)마다 log-time 을 speed× 만큼 전진시키고
+//   그 시각 이하 마지막 전이로 점프. 전이가 26k 든 3개든 "실제 경과시간/배속" 으로 재생.
+//   speed=0(최대): log-time 을 무시하고 전이 인덱스를 큰 폭으로 직접 전진.
+const FRAME=50;
 function play(){
   if(playTimer){ stop(); return; }
+  if(!DATA || !DATA.timeline.length) return;
   document.getElementById('play').textContent='⏸ 일시정지';
-  const dt=+document.getElementById('speed').value;
+  const speed=+document.getElementById('speed').value;
+  let clock = DATA.timeline[+slider.value][0];           // 현재 위치의 log-time 부터
+  const maxStep = Math.max(1, Math.ceil(DATA.timeline.length/15));   // 최대모드: 길이 무관 ~0.75초 완주
   playTimer=setInterval(()=>{
     let v=+slider.value; if(v>=+slider.max){ stop(); return; }
-    slider.value=v+1; render(slider.value);
-  }, dt/4);
+    let idx;
+    if(speed===0){ idx=Math.min(v+maxStep, +slider.max); }
+    else { clock += speed*FRAME*1000; idx=idxAtTime(DATA.timeline, clock); }   // ms→us
+    if(idx<=v) idx=v+1;                                  // 희소 구간에서도 최소 1전이 전진
+    slider.value=idx; render(idx);
+  }, FRAME);
 }
 function stop(){ clearInterval(playTimer); playTimer=null; document.getElementById('play').textContent='▶︎ 재생'; }
 
