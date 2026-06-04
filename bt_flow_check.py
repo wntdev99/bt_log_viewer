@@ -261,37 +261,11 @@ def parse_btlog(path):
     return xml_text, first_ts, timeline
 
 
-def cmd_export(args):
-    path = args.db
-    if path.endswith(".btlog"):
-        # FileLogger2 — 고속 전이도 손실 없이 완전 (SqliteLogger 누락 회피).
-        xml_text, first_ts, timeline = parse_btlog(path)
-        tree, tree_name = _build_tree(xml_text)
-        nodes = _build_nodes_map(tree)
-        date = datetime.datetime.fromtimestamp(
-            first_ts / 1e6, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        sid, source = 1, "btlog"
-    else:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
-            sid = resolve_session(con, args.session)
-            date, xml_text = con.execute(
-                "SELECT date, xml_tree FROM Definitions WHERE session_id=?", (sid,)).fetchone()
-            tree, tree_name = _build_tree(xml_text)
-            nodes = {str(uid): fp for fp, uid in con.execute(
-                "SELECT fullpath, node_uid FROM Nodes WHERE session_id=?", (sid,))}
-            rows = con.execute(
-                "SELECT timestamp, node_uid, state, duration, extra_data "
-                "FROM Transitions WHERE session_id=? ORDER BY timestamp", (sid,)).fetchall()
-            timeline = [[ts, uid, st, dur or 0] + ([extra] if extra else [])
-                        for ts, uid, st, dur, extra in rows]
-        finally:
-            con.close()
-        source = "sqlite"
-
+def _session_dict(tree_name, sid, date, source, tree, nodes, timeline):
+    """뷰어 session.json 한 세션의 표준 형태. (뷰어 CORE 가 그대로 소비)"""
     t0 = timeline[0][0] if timeline else 0
     t1 = timeline[-1][0] if timeline else 0
-    out = {
+    return {
         "meta": {"tree": tree_name, "session": sid, "date": date, "source": source,
                  "t0": t0, "t1": t1, "count": len(timeline)},
         "tree": tree,
@@ -300,12 +274,63 @@ def cmd_export(args):
         # 확장 슬롯 — 기대 흐름(spec) 을 나중에 채워 actual 과 비교 (diff 레이어).
         "expected": None,
     }
+
+
+def _build_session_from_db(con, sid):
+    """SqliteLogger .db3 의 한 session_id → 뷰어 세션 dict."""
+    date, xml_text = con.execute(
+        "SELECT date, xml_tree FROM Definitions WHERE session_id=?", (sid,)).fetchone()
+    tree, tree_name = _build_tree(xml_text)
+    nodes = {str(uid): fp for fp, uid in con.execute(
+        "SELECT fullpath, node_uid FROM Nodes WHERE session_id=?", (sid,))}
+    rows = con.execute(
+        "SELECT timestamp, node_uid, state, duration, extra_data "
+        "FROM Transitions WHERE session_id=? ORDER BY timestamp", (sid,)).fetchall()
+    timeline = [[ts, uid, st, dur or 0] + ([extra] if extra else [])
+                for ts, uid, st, dur, extra in rows]
+    return _session_dict(tree_name, sid, date, "sqlite", tree, nodes, timeline)
+
+
+def cmd_export(args):
+    path = args.db
+    if path.endswith(".btlog"):
+        # FileLogger2 — 고속 전이도 손실 없이 완전 (SqliteLogger 누락 회피).
+        # 파일당 단일 세션 구조라 --all-sessions 는 의미 없음.
+        if args.all_sessions:
+            print("주의: .btlog 는 파일당 단일 세션 — --all-sessions 무시", file=sys.stderr)
+        xml_text, first_ts, timeline = parse_btlog(path)
+        tree, tree_name = _build_tree(xml_text)
+        nodes = _build_nodes_map(tree)
+        date = datetime.datetime.fromtimestamp(
+            first_ts / 1e6, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        sessions = [_session_dict(tree_name, 1, date, "btlog", tree, nodes, timeline)]
+    else:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            if args.all_sessions:
+                # .db3 의 모든 세션 → 멀티세션 json (뷰어 드롭다운에서 선택).
+                sids = [r[0] for r in con.execute(
+                    "SELECT session_id FROM Definitions ORDER BY session_id")]
+                if not sids:
+                    sys.exit("오류: DB 에 세션이 없습니다.")
+                sessions = [_build_session_from_db(con, s) for s in sids]
+            else:
+                sid = resolve_session(con, args.session)
+                sessions = [_build_session_from_db(con, sid)]
+        finally:
+            con.close()
+
+    # 단일 세션이면 종전 그대로 최상위 객체로, 다세션이면 {"sessions":[...]} 로.
+    out = sessions[0] if len(sessions) == 1 else {"sessions": sessions}
+
     outpath = args.out or (os.path.splitext(path)[0] + ".session.json")
     with open(outpath, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
-    print(f"export 완료: {outpath}  (source={source})")
-    print(f"  tree={tree_name}  노드={len(nodes)}  전이={len(timeline)}  "
-          f"기간={(t1 - t0) / 1e6:.1f}s")
+    print(f"export 완료: {outpath}  (세션 {len(sessions)}개)")
+    for s in sessions:
+        m = s["meta"]
+        print(f"  s{m['session']}  tree={m['tree']}  노드={len(s['nodes'])}  "
+              f"전이={m['count']}  기간={(m['t1'] - m['t0']) / 1e6:.1f}s")
 
 
 def cmd_check(con, args):
@@ -373,6 +398,8 @@ def main():
     ep.add_argument("db", help=".db3(SqliteLogger) 또는 .btlog(FileLogger2, 고속구간 무손실)")
     ep.add_argument("--out", default=None, help="출력 경로 (기본=<입력>.session.json)")
     ep.add_argument("--session", type=int, default=None, help=".db3 한정, 기본=최신")
+    ep.add_argument("--all-sessions", action="store_true",
+                    help=".db3 의 모든 세션을 멀티세션 json 으로 (뷰어 드롭다운 선택)")
     ep.set_defaults(func=cmd_export, multi=True)
 
     mp = sub.add_parser("merge", help="여러 .db3 를 wall-clock 으로 병합한 통합 타임라인")

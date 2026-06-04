@@ -29,6 +29,9 @@
   header .meta { color:var(--muted); font-size:12px; }
   #drop { color:var(--muted); }
   #drop input { color:var(--text); }
+  #sesswrap { color:var(--muted); font-size:12px; }
+  select { background:#34374a; color:var(--text); border:1px solid var(--line);
+    border-radius:5px; padding:4px 6px; font-size:12px; max-width:520px; }
   #stage { flex:1; position:relative; overflow:hidden; }
   svg { width:100%; height:100%; cursor:grab; }
   svg.dragging { cursor:grabbing; }
@@ -57,7 +60,8 @@
 <div id="app">
   <header>
     <h1>BT Flow Viewer</h1>
-    <span id="drop">session.json 드롭 또는 <input type="file" id="file" accept=".json"></span>
+    <span id="drop">.btlog / .session.json 드롭 또는 <input type="file" id="file" accept=".json,.btlog" multiple></span>
+    <label id="sesswrap" style="display:none">세션 <select id="sessionSel"></select></label>
     <span class="meta" id="meta"></span>
   </header>
   <div id="stage">
@@ -124,6 +128,74 @@ function layout(root) {
   return { nodes, edges };
 }
 
+// ---- .btlog (FileLogger2) 직접 파싱 — bt_flow_check.py parse_btlog 포팅 ----
+// 포맷: 'BTCPP4-FileLogger2'(18) + protocol(1) + xml_size(int32 LE) + xml(UTF-8)
+//       + first_ts(int64 LE, usec) + [전이 9B: ts_usec(6,상대) uid(2) state(1)]...
+// ts 는 first_ts 기준 상대 → absolute epoch-us 환산(.db3 와 동일 단위, 병합 호환).
+function parseBtlog(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf), dec = new TextDecoder('utf-8');
+  const magic = 'BTCPP4-FileLogger2';
+  if (dec.decode(u8.subarray(0, magic.length)) !== magic)
+    throw new Error('btlog magic 불일치 (FileLogger2 파일이 아님)');
+  let p = magic.length + 1;                       // magic + protocol(1)
+  const xmlSize = dv.getInt32(p, true); p += 4;
+  const xmlText = dec.decode(u8.subarray(p, p + xmlSize)); p += xmlSize;
+  const firstTs = Number(dv.getBigInt64(p, true)); p += 8;   // usec, 2^53 내 안전
+  const n = Math.floor((u8.length - p) / 9), timeline = [];
+  for (let k = 0; k < n; k++) {
+    const off = p + k * 9;
+    let tsRel = 0; for (let b = 5; b >= 0; b--) tsRel = tsRel * 256 + u8[off + b];  // 6B LE
+    const uid = u8[off + 6] | (u8[off + 7] << 8);
+    timeline.push([firstTs + tsRel, uid, u8[off + 8], 0]);
+  }
+  return { xmlText, firstTs, timeline };
+}
+
+// xml_tree → SubTree 펼친 노드 트리 — bt_flow_check.py _build_tree 포팅 (DOMParser).
+function buildTreeFromXml(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('XML 파싱 실패');
+  const root = doc.documentElement;
+  const bts = Array.from(root.children).filter(e => e.tagName === 'BehaviorTree');
+  const defs = {}; bts.forEach(bt => defs[bt.getAttribute('ID')] = bt);
+  const kids = el => Array.from(el.children).filter(c => c.getAttribute('_uid') != null);
+  function nodeOf(el) {
+    const uid = el.getAttribute('_uid'), tag = el.tagName, name = el.getAttribute('name') || tag;
+    if (tag === 'SubTree') {
+      const subid = el.getAttribute('ID'), d = defs[subid];
+      return { uid: uid != null ? +uid : null, name, type: 'SubTree', subtree: subid,
+               children: d ? kids(d).map(nodeOf) : [] };
+    }
+    return { uid: uid != null ? +uid : null, name, type: tag, children: kids(el).map(nodeOf) };
+  }
+  const main = bts[0];                              // BTCPP4: 첫 BehaviorTree = main
+  const rootNode = main ? kids(main)[0] : null;
+  return { tree: rootNode ? nodeOf(rootNode) : null, treeName: main && main.getAttribute('ID') };
+}
+
+// 트리 → uid:fullpath(근사) 맵 — bt_flow_check.py _build_nodes_map 포팅.
+function buildNodesMap(tree) {
+  const nodes = {};
+  (function walk(n, prefix) {
+    if (n.uid != null) nodes[String(n.uid)] = `${prefix}${n.name || n.type}::${n.uid}`;
+    const np = n.type === 'SubTree' ? `${prefix}${n.subtree || 'SubTree'}::${n.uid}/` : prefix;
+    (n.children || []).forEach(c => walk(c, np));
+  })(tree, '');
+  return nodes;
+}
+
+// .btlog ArrayBuffer → 뷰어 세션 객체 (Python cmd_export 의 btlog 분기와 동일 스키마).
+function sessionFromBtlog(name, buf) {
+  const { xmlText, firstTs, timeline } = parseBtlog(buf);
+  const { tree, treeName } = buildTreeFromXml(xmlText);
+  const date = new Date(firstTs / 1000).toISOString().replace('T', ' ').slice(0, 19); // UTC
+  const t0 = timeline.length ? timeline[0][0] : 0;
+  const t1 = timeline.length ? timeline[timeline.length - 1][0] : 0;
+  return { meta: { tree: treeName, session: 1, date, source: 'btlog', t0, t1,
+                   count: timeline.length, file: name },
+           tree, nodes: buildNodesMap(tree), timeline, expected: null };
+}
+
 // ============================ VIEW (렌더 + 상호작용) ============================
 let DATA=null, SEQ=null, NODES=[], EDGES=[], rectByUid=new Map(), playTimer=null, selUid=null;
 const svg=document.getElementById('svg'), gRoot=document.getElementById('root');
@@ -131,6 +203,7 @@ const slider=document.getElementById('slider'), tl=document.getElementById('tl')
 const info=document.getElementById('info'), ticklog=document.getElementById('ticklog');
 
 function load(data) {
+  stop(); selUid=null; info.style.display='none';
   DATA = data; SEQ = buildSeq(data.timeline);
   const lo = layout(data.tree); NODES = lo.nodes; EDGES = lo.edges;
   rectByUid.clear(); gRoot.innerHTML='';
@@ -240,16 +313,61 @@ window.addEventListener('mouseup',()=>{ pan=null; svg.classList.remove('dragging
 svg.addEventListener('click',()=>{ selUid=null; info.style.display='none';
   rectByUid.forEach(o=>o.g.classList.remove('sel')); });
 
-// 파일 로드 (드롭 + 선택)
-function readFile(f){ const r=new FileReader(); r.onload=()=>{ try{ load(JSON.parse(r.result)); }
-  catch(err){ alert('JSON 파싱 실패: '+err); } }; r.readAsText(f); }
-document.getElementById('file').onchange=e=>{ if(e.target.files[0]) readFile(e.target.files[0]); };
-window.addEventListener('dragover',e=>e.preventDefault());
-window.addEventListener('drop',e=>{ e.preventDefault(); if(e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]); });
+// ---- 세션 레지스트리 + 드롭다운 (여러 파일/세션 누적 → 선택) ----
+let SESSIONS=[];
+const sessionSel=document.getElementById('sessionSel'), sesswrap=document.getElementById('sesswrap');
+function sessionLabel(s,i){
+  const m=s.meta||{};
+  return `[${i}] ${m.tree||'?'} · s${m.session} · ${m.date||''} · 전이 ${m.count}` + (m.file?` · ${m.file}`:'');
+}
+function refreshSessionSel(){
+  sessionSel.innerHTML='';
+  SESSIONS.forEach((s,i)=>{ const o=document.createElement('option');
+    o.value=i; o.textContent=sessionLabel(s,i); sessionSel.appendChild(o); });
+  sesswrap.style.display = SESSIONS.length>0 ? '' : 'none';
+}
+function selectSession(i){ if(i<0||i>=SESSIONS.length) return;
+  sessionSel.value=i; load(SESSIONS[i]); }
+// json 한 파일은 단일 세션({meta,...}) 또는 멀티세션({sessions:[...]}) 둘 다 허용.
+function sessionsOf(json, fname){
+  const list = Array.isArray(json.sessions) ? json.sessions : [json];
+  list.forEach(s=>{ if(s.meta && !s.meta.file) s.meta.file=fname; });
+  return list;
+}
+function addSessions(list){ if(!list.length) return;
+  const base=SESSIONS.length; SESSIONS.push(...list);
+  refreshSessionSel(); selectSession(base); }   // 새로 추가된 첫 세션으로 점프
 
-// URL ?data=경로 자동 로드 (http 서버로 열 때)
+// 확장자별 적재: .btlog 직접 파싱 / .json / .db3 안내
+function ingestFile(file){
+  const n=file.name.toLowerCase(), r=new FileReader();
+  if(n.endsWith('.btlog')){
+    r.onload=()=>{ try{ addSessions([sessionFromBtlog(file.name, r.result)]); }
+      catch(err){ alert('btlog 파싱 실패: '+(err.message||err)); } };
+    r.readAsArrayBuffer(file);
+  } else if(n.endsWith('.json')){
+    r.onload=()=>{ try{ addSessions(sessionsOf(JSON.parse(r.result), file.name)); }
+      catch(err){ alert('JSON 파싱 실패: '+err); } };
+    r.readAsText(file);
+  } else if(n.endsWith('.db3')){
+    alert('.db3 는 브라우저에서 직접 열 수 없습니다 (SQLite).\n'+
+          '· bt_flow_check.py export <file>.db3 로 .session.json 생성, 또는\n'+
+          '· 같은 세션의 .btlog (고속구간 무손실) 를 드롭하세요.');
+  } else { alert('지원하지 않는 형식: '+file.name+'  (.btlog / .json)'); }
+}
+
+document.getElementById('file').onchange=e=>{ Array.from(e.target.files).forEach(ingestFile); };
+sessionSel.onchange=e=>selectSession(+e.target.value);
+window.addEventListener('dragover',e=>e.preventDefault());
+window.addEventListener('drop',e=>{ e.preventDefault();
+  Array.from(e.dataTransfer.files).forEach(ingestFile); });
+
+// URL 자동 로드 (http 서버로 열 때): ?data=<json> 또는 ?btlog=<btlog>
 const qs=new URLSearchParams(location.search);
-if(qs.get('data')) fetch(qs.get('data')).then(r=>r.json()).then(load).catch(()=>{});
+if(qs.get('data')) fetch(qs.get('data'))
+  .then(r=>r.json()).then(j=>addSessions(sessionsOf(j, qs.get('data').split('/').pop()))).catch(()=>{});
+if(qs.get('btlog')) fetch(qs.get('btlog'))
+  .then(r=>r.arrayBuffer()).then(b=>addSessions([sessionFromBtlog(qs.get('btlog').split('/').pop(), b)])).catch(()=>{});
 </script>
 </body>
 </html>
