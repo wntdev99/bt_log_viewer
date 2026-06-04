@@ -30,6 +30,9 @@
   #drop { color:var(--muted); }
   #drop input { color:var(--text); }
   #sesswrap { color:var(--muted); font-size:12px; }
+  header button { background:#34374a; color:var(--text); border:1px solid var(--line);
+    border-radius:5px; padding:4px 10px; cursor:pointer; font-size:12px; }
+  header button:hover { background:#3f4358; }
   select { background:#34374a; color:var(--text); border:1px solid var(--line);
     border-radius:5px; padding:4px 6px; font-size:12px; max-width:520px; }
   #stage { flex:1; position:relative; overflow:hidden; }
@@ -62,6 +65,7 @@
     <h1>BT Flow Viewer</h1>
     <span id="drop">.btlog / .session.json 드롭 또는 <input type="file" id="file" accept=".json,.btlog" multiple></span>
     <label id="sesswrap" style="display:none">세션 <select id="sessionSel"></select></label>
+    <button id="mergeBtn" style="display:none" title="로드된 모든 세션을 하나의 통합 타임라인으로 합침">⛓ 합쳐보기</button>
     <span class="meta" id="meta"></span>
   </header>
   <div id="stage">
@@ -196,6 +200,34 @@ function sessionFromBtlog(name, buf) {
            tree, nodes: buildNodesMap(tree), timeline, expected: null };
 }
 
+// 여러 세션 → 하나의 통합 세션. 레이어별 uid 를 "L{i}:{uid}" 로 네임스페이싱해
+// 충돌(두 트리가 모두 uid=1 사용)을 제거하고, 합성 super-root 아래 각 레이어 트리를
+// 쌓는다. timeline 은 전 레이어 전이를 absolute epoch-us 로 정렬(동일 시간축 = 병합 근거).
+function mergeSessions(sessions) {
+  const layerRoots = [], nodes = {}; let timeline = [];
+  sessions.forEach((s, li) => {
+    const ns = u => `L${li}:${u}`;
+    const clone = n => ({ ...n, uid: n.uid != null ? ns(n.uid) : null,
+                          children: (n.children || []).map(clone) });
+    const troot = s.tree ? clone(s.tree) : null;
+    layerRoots.push({ uid: null, name: `▼ L${li} · ${s.meta.tree}`, type: '(layer)',
+                      children: troot ? [troot] : [] });
+    Object.entries(s.nodes).forEach(([u, fp]) => { nodes[ns(u)] = `L${li}/${fp}`; });
+    s.timeline.forEach(tr => timeline.push([tr[0], ns(tr[1]), ...tr.slice(2)]));
+  });
+  timeline.sort((a, b) => a[0] - b[0]);
+  const superRoot = { uid: null, type: '(merged)',
+                      name: 'MERGED ' + sessions.map(s => s.meta.tree).join(' + '),
+                      children: layerRoots };
+  const t0 = timeline.length ? timeline[0][0] : 0;
+  const t1 = timeline.length ? timeline[timeline.length - 1][0] : 0;
+  return { meta: { tree: sessions.map(s => s.meta.tree).join('+'), session: 'merged',
+                   date: sessions[0].meta.date, source: 'merged', t0, t1,
+                   count: timeline.length,
+                   file: '⛓ ' + sessions.map(s => s.meta.file || ('s' + s.meta.session)).join(' + ') },
+           tree: superRoot, nodes, timeline, expected: null };
+}
+
 // ============================ VIEW (렌더 + 상호작용) ============================
 let DATA=null, SEQ=null, NODES=[], EDGES=[], rectByUid=new Map(), playTimer=null, selUid=null;
 const svg=document.getElementById('svg'), gRoot=document.getElementById('root');
@@ -221,7 +253,8 @@ function load(data) {
     g.setAttribute('transform',`translate(${n._x},${n._y-12})`);
     const rect=document.createElementNS(NS,'rect');
     rect.setAttribute('width',170); rect.setAttribute('height',24);
-    rect.setAttribute('fill',COLOR[0]); g.appendChild(rect);
+    // uid 없는 합성 노드(MERGED/레이어 헤더)는 상태색 대상 아님 → 헤더색으로 구분.
+    rect.setAttribute('fill', n.uid==null ? '#46506e' : COLOR[0]); g.appendChild(rect);
     const t1=document.createElementNS(NS,'text');
     t1.setAttribute('x',8); t1.setAttribute('y',9); t1.setAttribute('class','name');
     const label = n.type==='SubTree' ? ('▸ '+(n.subtree||'SubTree')) : (n.name||n.type);
@@ -320,12 +353,21 @@ function sessionLabel(s,i){
   const m=s.meta||{};
   return `[${i}] ${m.tree||'?'} · s${m.session} · ${m.date||''} · 전이 ${m.count}` + (m.file?` · ${m.file}`:'');
 }
+const mergeBtn=document.getElementById('mergeBtn');
 function refreshSessionSel(){
   sessionSel.innerHTML='';
   SESSIONS.forEach((s,i)=>{ const o=document.createElement('option');
     o.value=i; o.textContent=sessionLabel(s,i); sessionSel.appendChild(o); });
   sesswrap.style.display = SESSIONS.length>0 ? '' : 'none';
+  // 비병합 세션이 2개 이상이면 합쳐보기 가능.
+  const base=SESSIONS.filter(s=>(s.meta||{}).source!=='merged').length;
+  mergeBtn.style.display = base>=2 ? '' : 'none';
 }
+mergeBtn.onclick=()=>{
+  const base=SESSIONS.filter(s=>(s.meta||{}).source!=='merged');
+  if(base.length<2){ alert('합칠 세션이 2개 이상 필요합니다.'); return; }
+  addSessions([mergeSessions(base)]);   // 통합 세션을 새 세션으로 추가 후 자동 선택
+};
 function selectSession(i){ if(i<0||i>=SESSIONS.length) return;
   sessionSel.value=i; load(SESSIONS[i]); }
 // json 한 파일은 단일 세션({meta,...}) 또는 멀티세션({sessions:[...]}) 둘 다 허용.
