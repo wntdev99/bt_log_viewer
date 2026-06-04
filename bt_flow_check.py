@@ -57,6 +57,7 @@ import json
 import operator
 import os
 import sqlite3
+import struct
 import sys
 import xml.etree.ElementTree as ET
 
@@ -211,37 +212,98 @@ def _build_tree(xml_text):
     return node_of(root_node) if root_node is not None else None, main.get("ID")
 
 
-def cmd_export(con, args):
-    sid = resolve_session(con, args.session)
-    row = con.execute(
-        "SELECT date, xml_tree FROM Definitions WHERE session_id=?", (sid,)).fetchone()
-    date, xml_text = row
-    tree, tree_name = _build_tree(xml_text)
+def _build_nodes_map(tree):
+    """트리(dict)를 순회해 uid -> fullpath(근사) 맵 생성. db Nodes 테이블 대용.
+    SubTree 는 'subtree::uid/' prefix 로 중첩 경로 표기."""
+    nodes = {}
 
-    nodes = {str(uid): path for path, uid in con.execute(
-        "SELECT fullpath, node_uid FROM Nodes WHERE session_id=?", (sid,))}
+    def walk(n, prefix=""):
+        uid = n.get("uid")
+        name = n.get("name") or n.get("type")
+        if uid is not None:
+            nodes[str(uid)] = f"{prefix}{name}::{uid}"
+        np = prefix
+        if n.get("type") == "SubTree":
+            np = f"{prefix}{n.get('subtree', 'SubTree')}::{uid}/"
+        for c in n.get("children", []):
+            walk(c, np)
 
-    rows = con.execute(
-        "SELECT timestamp, node_uid, state, duration, extra_data "
-        "FROM Transitions WHERE session_id=? ORDER BY timestamp", (sid,)).fetchall()
-    timeline = [[ts, uid, st, dur or 0] + ([extra] if extra else [])
-                for ts, uid, st, dur, extra in rows]
-    t0 = rows[0][0] if rows else 0
-    t1 = rows[-1][0] if rows else 0
+    if tree:
+        walk(tree)
+    return nodes
 
+
+def parse_btlog(path):
+    """FileLogger2(.btlog) 파싱 → (xml_text, first_ts_usec, timeline).
+    포맷: 'BTCPP4-FileLogger2'(18) + protocol(1) + xml_size(int32) + xml
+          + first_timestamp(int64 usec) + [전이 9바이트: ts_usec(6) uid(2) state(1)]...
+    ts 는 first_timestamp 기준 상대 → absolute epoch-us 로 환산(db 와 동일 단위)."""
+    with open(path, "rb") as f:
+        d = f.read()
+    magic = b"BTCPP4-FileLogger2"
+    if d[:len(magic)] != magic:
+        sys.exit(f"btlog magic 불일치: {d[:18]!r}")
+    p = len(magic) + 1  # magic + protocol(1)
+    xml_size = struct.unpack("<i", d[p:p + 4])[0]
+    p += 4
+    xml_text = d[p:p + xml_size].decode("utf-8", "replace")
+    p += xml_size
+    first_ts = struct.unpack("<q", d[p:p + 8])[0]
+    p += 8
+    n = (len(d) - p) // 9
+    timeline = []
+    for k in range(n):
+        off = p + k * 9
+        ts_rel = int.from_bytes(d[off:off + 6], "little")
+        uid = int.from_bytes(d[off + 6:off + 8], "little")
+        state = d[off + 8]
+        timeline.append([first_ts + ts_rel, uid, state, 0])
+    return xml_text, first_ts, timeline
+
+
+def cmd_export(args):
+    path = args.db
+    if path.endswith(".btlog"):
+        # FileLogger2 — 고속 전이도 손실 없이 완전 (SqliteLogger 누락 회피).
+        xml_text, first_ts, timeline = parse_btlog(path)
+        tree, tree_name = _build_tree(xml_text)
+        nodes = _build_nodes_map(tree)
+        date = datetime.datetime.fromtimestamp(
+            first_ts / 1e6, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        sid, source = 1, "btlog"
+    else:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            sid = resolve_session(con, args.session)
+            date, xml_text = con.execute(
+                "SELECT date, xml_tree FROM Definitions WHERE session_id=?", (sid,)).fetchone()
+            tree, tree_name = _build_tree(xml_text)
+            nodes = {str(uid): fp for fp, uid in con.execute(
+                "SELECT fullpath, node_uid FROM Nodes WHERE session_id=?", (sid,))}
+            rows = con.execute(
+                "SELECT timestamp, node_uid, state, duration, extra_data "
+                "FROM Transitions WHERE session_id=? ORDER BY timestamp", (sid,)).fetchall()
+            timeline = [[ts, uid, st, dur or 0] + ([extra] if extra else [])
+                        for ts, uid, st, dur, extra in rows]
+        finally:
+            con.close()
+        source = "sqlite"
+
+    t0 = timeline[0][0] if timeline else 0
+    t1 = timeline[-1][0] if timeline else 0
     out = {
-        "meta": {"tree": tree_name, "session": sid, "date": date,
-                 "t0": t0, "t1": t1, "count": len(rows)},
+        "meta": {"tree": tree_name, "session": sid, "date": date, "source": source,
+                 "t0": t0, "t1": t1, "count": len(timeline)},
         "tree": tree,
         "nodes": nodes,
         "timeline": timeline,
         # 확장 슬롯 — 기대 흐름(spec) 을 나중에 채워 actual 과 비교 (diff 레이어).
         "expected": None,
     }
-    path = args.out or (os.path.splitext(args.db)[0] + ".session.json")
-    with open(path, "w", encoding="utf-8") as f:
+    outpath = args.out or (os.path.splitext(path)[0] + ".session.json")
+    with open(outpath, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
-    print(f"export 완료: {path}")
+    print(f"export 완료: {outpath}  (source={source})")
     print(f"  tree={tree_name}  노드={len(nodes)}  전이={len(timeline)}  "
           f"기간={(t1 - t0) / 1e6:.1f}s")
 
@@ -307,11 +369,11 @@ def main():
     cp.add_argument("--session", type=int, default=None, help="기본=최신")
     cp.set_defaults(func=cmd_check)
 
-    ep = sub.add_parser("export", help="세션을 시각화 뷰어용 session.json 으로 export")
-    ep.add_argument("db")
-    ep.add_argument("--out", default=None, help="출력 경로 (기본=<db>.session.json)")
-    ep.add_argument("--session", type=int, default=None, help="기본=최신")
-    ep.set_defaults(func=cmd_export)
+    ep = sub.add_parser("export", help="세션을 시각화 뷰어용 session.json 으로 export (.db3/.btlog)")
+    ep.add_argument("db", help=".db3(SqliteLogger) 또는 .btlog(FileLogger2, 고속구간 무손실)")
+    ep.add_argument("--out", default=None, help="출력 경로 (기본=<입력>.session.json)")
+    ep.add_argument("--session", type=int, default=None, help=".db3 한정, 기본=최신")
+    ep.set_defaults(func=cmd_export, multi=True)
 
     mp = sub.add_parser("merge", help="여러 .db3 를 wall-clock 으로 병합한 통합 타임라인")
     mp.add_argument("dbs", nargs="+", help="병합할 .db3 경로들 (각 db 최신 세션 사용)")
