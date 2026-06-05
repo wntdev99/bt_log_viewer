@@ -230,6 +230,8 @@ table.grid tr.clk { cursor: pointer; } table.grid tr.clk:hover { background: var
 .overlay { position: fixed; inset: 0; background: rgba(25,31,40,.28); backdrop-filter: blur(2px);
   display: none; align-items: flex-start; justify-content: center; z-index: 100; }
 .overlay.show { display: flex; }
+/* 진입 화면은 뒤 업로드 화면이 비치지 않도록 불투명 배경 */
+#landing { background: var(--bg); backdrop-filter: none; align-items: center; }
 .sheet { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-pop);
   width: 560px; max-width: 92vw; margin-top: 9vh; max-height: 78vh; display: flex; flex-direction: column; overflow: hidden; }
 .sheet header { padding: 16px 18px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }

@@ -19,6 +19,7 @@
   <!-- 상단 바 -->
   <header id="topbar">
     <span class="brand"><span class="logo">BT</span> Flow Viewer</span>
+    <button class="btn icon ghost" id="homeBtn" title="시작 화면 (모드 전환)">🏠</button>
     <button class="btn" id="openBtn">📂 열기</button>
     <input type="file" id="fileInput" accept=".btlog,.json" multiple hidden>
     <label id="sessionWrap" class="field" style="display:none"><span class="muted">세션</span>
@@ -88,7 +89,8 @@
 <div class="overlay" id="landing">
   <div class="sheet" style="width:640px">
     <header><span class="logo" style="width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#3182F6,#1B64DA);display:inline-grid;place-items:center;color:#fff">BT</span>
-      Flow Viewer <span class="muted" style="font-weight:400;font-size:12px">— 시작 방식을 선택하세요</span></header>
+      Flow Viewer <span class="muted" style="font-weight:400;font-size:12px">— 시작 방식을 선택하세요</span>
+      <span style="flex:1"></span><button class="btn ghost icon" id="landingClose" style="display:none" title="닫기 (Esc)">✕</button></header>
     <div class="body" style="padding:18px">
       <div class="mode-grid">
         <button class="mode-card" id="modeRecord">

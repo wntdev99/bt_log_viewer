@@ -40,8 +40,11 @@
   function showLanding() {
     $('landing').classList.add('show'); $('liveForm').style.display = 'none';
     document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('sel'));
+    // 이미 보고 있는 세션이 있으면 닫기 가능(취소), 없으면 모드 선택 강제
+    $('landingClose').style.display = store.state.sessions.length ? '' : 'none';
   }
   function hideLanding() { $('landing').classList.remove('show'); }
+  function dismissLanding() { if (store.state.sessions.length) hideLanding(); }
   function closeLive() { if (liveES) { liveES.close(); liveES = null; } }
   function refreshLiveChip() {
     const chip = $('liveChip');
@@ -231,7 +234,7 @@
       else if (e.key === 'Escape') closeSheets();
       return;
     }
-    if (e.key === 'Escape') { closeSheets(); return; }
+    if (e.key === 'Escape') { closeSheets(); dismissLanding(); return; }
     if (typing) return;
     if (e.key === 'ArrowRight') { e.preventDefault(); BTV.transport.stop(); store.stepIdx(1); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); BTV.transport.stop(); store.stepIdx(-1); }
@@ -297,6 +300,9 @@
     $('liveConnect').onclick = () => connectLive($('livePath').value.trim());
     $('livePath').onkeydown = e => { if (e.key === 'Enter') connectLive($('livePath').value.trim()); };
     $('liveChip').onclick = () => store.setFollow(!store.state.follow);
+    $('homeBtn').onclick = showLanding;
+    $('landingClose').onclick = dismissLanding;
+    $('landing').addEventListener('mousedown', e => { if (e.target === $('landing')) dismissLanding(); });
 
     // 드래그&드롭
     window.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('drag-over'); });
