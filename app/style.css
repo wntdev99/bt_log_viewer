@@ -1,5 +1,6 @@
-/* style.css — bt_log_viewer v2 디자인 시스템 (토스 스타일: 라이트·둥근·은은) */
-:root {
+/* style.css — bt_log_viewer v2 디자인 시스템 (토스 스타일). 화이트/블랙 테마.
+   상태색은 노드 "전체"를 칠하는 solid 톤 + 그 위 텍스트 대비색(--on-*)을 함께 정의. */
+:root, [data-theme="light"] {
   /* 배경/표면 */
   --bg: #F2F4F6; --surface: #FFFFFF; --surface-2: #F9FAFB; --hover: #F2F4F6;
   /* 텍스트 */
@@ -8,21 +9,43 @@
   --line: #E5E8EB; --line-2: #D1D6DB;
   /* 강조 (Toss Blue) */
   --accent: #3182F6; --accent-weak: #E8F3FF; --accent-press: #1B64DA;
-  /* 상태색 (라이트 배경에서 또렷하게) */
-  --idle: #E5E8EB; --idle-line: #C4CAD2;
-  --running: #FF9500; --running-weak: #FFF3E0;
-  --success: #15B886; --success-weak: #E3FBF2;
-  --failure: #F04452; --failure-weak: #FFECEE;
-  --skipped: #B0B8C1; --skipped-weak: #F1F3F5;
+  /* 상태 solid 색 (노드 전체 채움) — 화이트 테마: 흰 텍스트가 또렷하도록 충분히 진하게 */
+  --running: #F08C00; --running-weak: #FFF3E0;
+  --success: #12B886; --success-weak: #E3FBF2;
+  --failure: #F03E4E; --failure-weak: #FFECEE;
+  --skipped: #868E96; --skipped-weak: #F1F3F5;
+  --idle: #E5E8EB;
+  /* 노드 채움 위 텍스트 색 + 테두리 + IDLE 표현 */
+  --on-running: #2B1A00; --on-success: #FFFFFF; --on-failure: #FFFFFF; --on-skipped: #FFFFFF;
+  --node-idle-bg: #ECEEF1; --node-idle-text: #5A6573; --node-idle-line: #D1D6DB;
+  --node-edge: rgba(0,0,0,.16);
   /* 그림자 */
   --shadow-1: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
   --shadow-2: 0 4px 16px rgba(0,0,0,.10);
   --shadow-pop: 0 8px 28px rgba(0,0,0,.16);
+  --dot-bg: radial-gradient(circle at 1px 1px, rgba(0,0,0,.045) 1px, transparent 0);
   /* 형태 */
   --r-sm: 8px; --r: 12px; --r-lg: 16px; --r-pill: 999px;
   --fs: 13px;
   --font: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
   --mono: 'SFMono-Regular', ui-monospace, 'JetBrains Mono', Consolas, monospace;
+}
+[data-theme="dark"] {
+  --bg: #16181D; --surface: #1F2228; --surface-2: #25282F; --hover: #2A2E36;
+  --text: #E6E9EE; --text-2: #B0B8C1; --text-3: #7A828E; --on-accent: #FFFFFF;
+  --line: #2E323A; --line-2: #3A3F49;
+  --accent: #4D94FF; --accent-weak: #1E2A3D; --accent-press: #6AA8FF;
+  /* 다크 배경에선 약간 더 밝은 solid 톤 */
+  --running: #FF9F1A; --running-weak: #3A2A0E;
+  --success: #1FCB94; --success-weak: #103027;
+  --failure: #FF5965; --failure-weak: #3A1B20;
+  --skipped: #8A94A0; --skipped-weak: #2A2E36;
+  --idle: #2A2E36;
+  --on-running: #241500; --on-success: #06241B; --on-failure: #2A0608; --on-skipped: #11151B;
+  --node-idle-bg: #2A2E37; --node-idle-text: #AEB6C0; --node-idle-line: #3C414B;
+  --node-edge: rgba(255,255,255,.16);
+  --shadow-1: 0 1px 3px rgba(0,0,0,.4); --shadow-2: 0 4px 16px rgba(0,0,0,.5); --shadow-pop: 0 8px 28px rgba(0,0,0,.6);
+  --dot-bg: radial-gradient(circle at 1px 1px, rgba(255,255,255,.05) 1px, transparent 0);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -82,18 +105,18 @@ button, input, select { font-family: inherit; font-size: inherit; color: inherit
 .drag-over #empty .card { border-color: var(--accent); background: var(--accent-weak); }
 
 /* ---- 그래프 캔버스 ---- */
-#svg { width: 100%; height: 100%; cursor: grab; display: block; background:
-  radial-gradient(circle at 1px 1px, rgba(0,0,0,.045) 1px, transparent 0) 0 0 / 22px 22px; }
+#svg { width: 100%; height: 100%; cursor: grab; display: block; background: var(--dot-bg) 0 0 / 22px 22px; }
 #svg.dragging { cursor: grabbing; }
 .edge { stroke: var(--line-2); stroke-width: 1.4; fill: none; }
-.edge.on-path { stroke: var(--accent); stroke-width: 2.4; }
-.node rect.box { fill: var(--surface); stroke: var(--idle-line); stroke-width: 1.4; rx: 9;
-  transition: fill .14s ease, stroke .14s ease; }
-.node .title { fill: var(--text); font-size: 11.5px; font-weight: 600; dominant-baseline: middle; }
-.node .sub { fill: var(--text-3); font-size: 9px; dominant-baseline: middle; }
-.node .accent { rx: 9; }
-.node.sel rect.box { stroke: var(--accent); stroke-width: 2.6; }
-.node.search-hit rect.box { stroke: var(--running); stroke-width: 2.4; stroke-dasharray: 4 3; }
+.edge.on-path { stroke: var(--accent); stroke-width: 2.6; }
+/* fill/stroke 는 JS(colorAt)가 상태색으로 칠한다 — CSS 에 두면 attribute 를 덮어쓰므로 빼둠.
+   여기선 모양/전이만 담당. */
+.node rect.box { rx: 9; transition: fill .14s ease, stroke .14s ease; }
+.node text { dominant-baseline: middle; pointer-events: none; }
+.node .title { font-size: 11.5px; font-weight: 600; }
+.node .sub { font-size: 9px; fill-opacity: .8; }
+.node.sel rect.box { stroke: var(--accent) !important; stroke-width: 3 !important; }
+.node.search-hit rect.box { stroke: var(--accent) !important; stroke-width: 2.6 !important; stroke-dasharray: 5 3; }
 .node.dim { opacity: .32; }
 .node .collapse { fill: var(--text-3); font-size: 11px; cursor: pointer; }
 .node .badge { font-size: 8.5px; font-weight: 700; }
@@ -118,7 +141,7 @@ text.badge { font-size: 8.5px; font-weight: 800; pointer-events: none; }
 
 /* 미니맵 */
 #minimap { position: absolute; right: 14px; bottom: 14px; width: 190px; height: 130px;
-  background: rgba(255,255,255,.85); backdrop-filter: blur(6px); border: 1px solid var(--line);
+  background: var(--surface); opacity: .94; border: 1px solid var(--line);
   border-radius: var(--r); box-shadow: var(--shadow-1); overflow: hidden; }
 #minimap svg { width: 100%; height: 100%; }
 #minimap .vp { fill: rgba(49,130,246,.14); stroke: var(--accent); stroke-width: 1; }

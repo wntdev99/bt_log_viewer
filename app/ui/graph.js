@@ -3,8 +3,10 @@
 (function (BTV) {
   const C = BTV.core, store = BTV.store, NS = 'http://www.w3.org/2000/svg';
   const NW = 192, NH = 26;
-  const FILL = { 0: 'var(--surface)', 1: 'var(--running-weak)', 2: 'var(--success-weak)', 3: 'var(--failure-weak)', 4: 'var(--skipped-weak)' };
-  const STROKE = { 0: 'var(--idle-line)', 1: 'var(--running)', 2: 'var(--success)', 3: 'var(--failure)', 4: 'var(--skipped)' };
+  // 노드 "전체" 를 상태 solid 색으로 채우고, 그 위 텍스트는 대비색(--on-*)으로.
+  const FILL = { 0: 'var(--node-idle-bg)', 1: 'var(--running)', 2: 'var(--success)', 3: 'var(--failure)', 4: 'var(--skipped)' };
+  const STROKE = { 0: 'var(--node-idle-line)', 1: 'var(--node-edge)', 2: 'var(--node-edge)', 3: 'var(--node-edge)', 4: 'var(--node-edge)' };
+  const TEXT = { 0: 'var(--node-idle-text)', 1: 'var(--on-running)', 2: 'var(--on-success)', 3: 'var(--on-failure)', 4: 'var(--on-skipped)' };
 
   let svg, gRoot, gEdges, gNodes, gState, gFlash;
   const rectByUid = new Map();          // uid(str) -> {g, box, node}
@@ -27,29 +29,28 @@
     NODES.forEach(n => {
       const g = el('g', { class: 'node', transform: `translate(${n._x},${n._y - NH / 2})` });
       const group = n.uid == null;
-      const box = el('rect', { class: 'box', width: NW, height: NH, x: 0, y: 0 });
-      if (group) { box.setAttribute('fill', 'var(--accent-weak)'); box.setAttribute('stroke', 'var(--accent)'); }
+      const box = el('rect', { class: 'box', width: NW, height: NH, x: 0, y: 0, 'stroke-width': 1.4,
+        fill: group ? 'var(--accent-weak)' : 'var(--node-idle-bg)',
+        stroke: group ? 'var(--accent)' : 'var(--node-idle-line)' });
       g.appendChild(box);
-      // 좌측 상태 액센트 바
-      const accent = el('rect', { class: 'accent', width: 4, height: NH - 8, x: 3, y: 4, fill: 'transparent' });
-      g.appendChild(accent);
       const label = n.type === 'SubTree' ? ('▸ ' + (n.subtree || 'SubTree')) : (n.name || n.type);
-      const title = el('text', { class: 'title', x: 12, y: NH * 0.38 });
-      title.textContent = label.length > 24 ? label.slice(0, 23) + '…' : label;
+      const title = el('text', { class: 'title', x: 11, y: NH * 0.38, fill: group ? 'var(--text)' : 'var(--node-idle-text)' });
+      title.textContent = label.length > 25 ? label.slice(0, 24) + '…' : label;
       g.appendChild(title);
-      const sub = el('text', { class: 'sub', x: 12, y: NH * 0.76 });
+      const sub = el('text', { class: 'sub', x: 11, y: NH * 0.76, fill: group ? 'var(--text-3)' : 'var(--node-idle-text)' });
       sub.textContent = (n.type === 'SubTree' ? 'SubTree' : n.type) + (n.uid != null ? '  #' + n.uid : '');
       g.appendChild(sub);
       // 접기 토글 (자식 있는 노드)
+      let tog = null;
       if ((n.children || []).length) {
-        const tog = el('text', { class: 'collapse', x: NW - 13, y: NH * 0.62 });
+        tog = el('text', { class: 'collapse', x: NW - 13, y: NH * 0.62, fill: group ? 'var(--text-3)' : 'var(--node-idle-text)' });
         tog.textContent = n._collapsed ? '⊕' : '⊖';
         tog.addEventListener('click', e => { e.stopPropagation(); store.toggleCollapse(n.uid != null ? n.uid : ('g' + n._x + '_' + n._y)); });
         g.appendChild(tog);
       }
       if (n.uid != null) {
         const uid = String(n.uid);
-        rectByUid.set(uid, { g, box, node: n, accent });
+        rectByUid.set(uid, { g, box, node: n, title, sub, tog });
         g.style.cursor = 'pointer';
         g.addEventListener('click', e => { e.stopPropagation(); store.select(n.uid); });
         g.addEventListener('mouseenter', () => store.hover(n.uid));
@@ -63,7 +64,9 @@
     rectByUid.forEach((o, uid) => {
       const st = C.stateAt(seq, uid, idx);
       o.box.setAttribute('fill', FILL[st]); o.box.setAttribute('stroke', STROKE[st]);
-      o.accent.setAttribute('fill', st === 0 ? 'transparent' : STROKE[st]);
+      o.box.setAttribute('stroke-width', '1.4');
+      o.title.setAttribute('fill', TEXT[st]); o.sub.setAttribute('fill', TEXT[st]);
+      if (o.tog) o.tog.setAttribute('fill', TEXT[st]);
       o._state = st;
     });
   }

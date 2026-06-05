@@ -3,6 +3,19 @@
   const C = BTV.core, store = BTV.store;
   const $ = id => document.getElementById(id);
 
+  /* ---- 테마 (화이트/블랙, localStorage 영속) ---- */
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem('btv-theme', t); } catch (e) {}
+    const btn = $('themeBtn'); if (btn) btn.textContent = t === 'dark' ? '☀️' : '🌙';
+    // 미니맵 색은 테마에 맞춰 재구성
+    BTV.minimap && BTV.minimap.rebuild && BTV.minimap.rebuild();
+  }
+  function toggleTheme() {
+    const cur = document.documentElement.getAttribute('data-theme') || 'light';
+    applyTheme(cur === 'dark' ? 'light' : 'dark'); BTV.toast(cur === 'dark' ? '화이트 테마' : '블랙 테마');
+  }
+
   /* ---- 토스트 ---- */
   let toastTimer = null;
   BTV.toast = function (msg) {
@@ -84,6 +97,7 @@
       { ic: '💾', label: '현재 세션 JSON 저장', sub: 'export', run: exportJson },
       { ic: '🖼', label: '트리 SVG 저장', sub: 'snapshot', run: exportSVG },
       { ic: '📸', label: '트리 PNG 저장', sub: '현재 화면', run: exportPNG },
+      { ic: '🌗', label: '화이트/블랙 테마 전환', sub: 't', run: toggleTheme },
       { ic: '⚙', label: '디버그 기능 설정 열기', sub: '토글', run: () => openSheet('settings') },
     ];
     BTV.panels.forEach(p => a.push({ ic: p.icon || '▦', label: '패널: ' + p.title, sub: 'dock', run: () => activatePanel(p.id) }));
@@ -174,6 +188,7 @@
     else if (e.key === 'ArrowLeft') { e.preventDefault(); BTV.transport.stop(); store.stepIdx(-1); }
     else if (e.key === ' ') { e.preventDefault(); BTV.transport.play(); }
     else if (e.key.toLowerCase() === 'f') BTV.graph && BTV.graph.fit();
+    else if (e.key.toLowerCase() === 't') toggleTheme();
     else if (e.key.toLowerCase() === 'b') store.toggleBookmark();
     else if (e.key === '/') { e.preventDefault(); $('searchInput') && $('searchInput').focus(); }
   }
@@ -185,6 +200,8 @@
 
   /* ---- 부팅 ---- */
   function boot() {
+    let saved = 'light'; try { saved = localStorage.getItem('btv-theme') || 'light'; } catch (e) {}
+    applyTheme(saved);
     BTV.features.forEach(f => { if (!(f.id in store.state.features)) store.state.features[f.id] = f.default; });
     BTV.mountGraph($('svg'));
     BTV.mountMinimap($('minimapSvg'));
@@ -196,6 +213,7 @@
     $('openBtn').onclick = () => $('fileInput').click();
     $('sessionSel').onchange = e => { BTV.transport.stop(); store.setActive(+e.target.value); };
     $('mergeBtn').onclick = doMerge;
+    $('themeBtn').onclick = toggleTheme;
     $('settingsBtn').onclick = () => openSheet('settings');
     $('paletteBtn').onclick = openPalette;
     $('dockToggle').onclick = () => $('dock').classList.toggle('collapsed');
