@@ -13,14 +13,26 @@ BehaviorTree.CPP 실행 로그(`.btlog` / `.db3`)를 **사후에 정량 검증·
 
 ## 1. 뷰어 (web app) — `index.html`
 
+진입 시 두 가지 모드를 고른다:
+
+- **📁 녹화본 재생** — 저장된 `.btlog`/`.session.json` 을 열어 시간축으로 되감아 분석.
+- **🔴 실시간 추적** — 로컬에서 기록 중인 `.btlog` 경로를 지정해 자라나는 전이를 실시간 추종.
+
 ```bash
-# 방법 A: 더블클릭 (의존성 0, classic script 라 file:// 에서도 동작)
+# 녹화본만: 더블클릭(의존성 0, file:// 동작) 또는 정적 서버
 xdg-open index.html
-# 방법 B: 로컬 서버 (자동 로드 ?btlog=/?data= 사용 시)
-./serve.sh                 # → http://localhost:8777
+
+# 실시간 추적: tail 서버 필요 (브라우저는 로컬 파일경로를 직접 못 읽으므로 SSE 로 스트리밍)
+./serve.sh --watch /tmp/bt_execution.btlog      # → http://localhost:8777
+#   진입화면 "실시간 추적" → 경로 입력 → 연결.  (?live=/tmp/bt_execution.btlog 로 자동연결도 가능)
 ```
 
-사용:
+> 실시간 추적 메커니즘: `live_server.py` 가 지정 `.btlog` 를 tail-follow 하여 헤더(트리)와
+> 새 전이를 SSE 로 보내고, 뷰어는 받는 즉시 타임라인에 누적·색칠한다. `● LIVE` 칩으로
+> 최신 추종 on/off. FileLogger2 는 async writer + 버퍼라 디스크 반영이 청크 단위(거의 실시간)이며,
+> 파일은 goal 1회마다 새로 생성되므로 새 세션은 자동으로 다시 잡힌다.
+
+사용(녹화본):
 1. `.btlog`(또는 `.session.json`)를 화면에 **끌어다 놓거나** `📂 열기`로 선택.
 2. 여러 개를 올린 뒤 **⛓ 합쳐보기** → 레이어(예: MoveTree + NavSingle)를 한 타임라인으로 병합.
 3. 하단 **방식(전이별/실시간)·배속**으로 재생, `◀ ▶`·`←→`로 한 전이씩, 밀도바 클릭으로 점프.
