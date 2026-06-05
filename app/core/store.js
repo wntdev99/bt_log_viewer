@@ -7,7 +7,7 @@
   const listeners = {};
   const state = {
     sessions: [], activeIndex: -1,
-    idx: 0, playing: false, mode: 'tick', speed: 1,
+    idx: 0, playing: false, mode: 'tick', speed: 1, orient: 'LR',
     selectedUid: null, hoverUid: null,
     collapsed: new Set(),          // 접힌 SubTree uid 문자열
     features: {},                  // featureId -> bool
@@ -57,6 +57,7 @@
 
     setMode(m) { state.mode = m; emit('config'); },
     setSpeed(s) { state.speed = +s; emit('config'); },
+    setOrient(o) { state.orient = o; if (this.active) { emit('load', this.active); emit('render', state.idx); } },
 
     toggleCollapse(uid) {
       uid = String(uid);

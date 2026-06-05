@@ -15,14 +15,23 @@
   function el(tag, attrs) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
 
   function build(session) {
-    const lo = C.layout(session.tree, store.state.collapsed);
+    const orient = store.state.orient || 'LR';
+    const lo = C.layout(session.tree, store.state.collapsed, orient);
+    const TB = lo.TB;
     NODES = lo.nodes; EDGES = lo.edges;
     rectByUid.clear();
     gEdges.textContent = ''; gNodes.textContent = ''; gState.textContent = ''; gFlash.textContent = '';
 
     EDGES.forEach(([p, c]) => {
-      const x1 = p._x + NW, y1 = p._y, x2 = c._x, y2 = c._y, mx = (x1 + x2) / 2;
-      const path = el('path', { class: 'edge', d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}` });
+      let d;
+      if (TB) {   // 부모 하단중앙 → 자식 상단중앙
+        const x1 = p._x + NW / 2, y1 = p._y + NH / 2, x2 = c._x + NW / 2, y2 = c._y - NH / 2, my = (y1 + y2) / 2;
+        d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+      } else {    // 부모 우측중앙 → 자식 좌측중앙
+        const x1 = p._x + NW, y1 = p._y, x2 = c._x, y2 = c._y, mx = (x1 + x2) / 2;
+        d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+      }
+      const path = el('path', { class: 'edge', d });
       path._from = p; path._to = c; gEdges.appendChild(path);
     });
 

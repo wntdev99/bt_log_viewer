@@ -35,23 +35,29 @@
     return nodes;
   }
 
-  // 가로 트리 레이아웃. collapsed(Set of uid 문자열) 에 든 노드는 자식 접음(_collapsed).
-  // 반환 노드는 _x,_y,_depth,_collapsed,_hidden 부여.
-  const NX = 230, NY = 34;
-  function layout(root, collapsed) {
+  // 트리 레이아웃. orient: 'LR'(좌→우, 기본) | 'TB'(위→아래).
+  //   collapsed(Set of uid 문자열) 에 든 노드는 자식 접음(_collapsed).
+  //   깊이축(dp)/형제축(cp) 좌표를 계산해 방향에 맞게 _x,_y 로 매핑.
+  function layout(root, collapsed, orient) {
     collapsed = collapsed || new Set();
+    const TB = orient === 'TB';
+    const DEPTH = TB ? 88 : 230;     // 깊이 축 간격 (TB=세로 행간 / LR=가로 열간)
+    const LEAF = TB ? 214 : 34;      // 형제 축 간격 (TB 는 노드 폭 192 < 214 보장)
     let leaf = 0; const nodes = [], edges = [];
     (function walk(n, depth, parent) {
       n._depth = depth; n._collapsed = false; n._hidden = false;
       const isCol = n.uid != null && collapsed.has(String(n.uid));
       const kids = (!isCol && n.children) ? n.children : [];
-      n._x = depth * NX;
-      if (kids.length === 0) { n._y = (leaf++) * NY; n._collapsed = isCol && (n.children || []).length > 0; }
-      else { kids.forEach(c => walk(c, depth + 1, n)); n._y = (kids[0]._y + kids[kids.length - 1]._y) / 2; }
+      const dp = depth * DEPTH;
+      let cp;
+      if (kids.length === 0) { cp = (leaf++) * LEAF; n._collapsed = isCol && (n.children || []).length > 0; }
+      else { kids.forEach(c => walk(c, depth + 1, n)); cp = (kids[0]._cross + kids[kids.length - 1]._cross) / 2; }
+      n._cross = cp;
+      if (TB) { n._x = cp; n._y = dp; } else { n._x = dp; n._y = cp; }
       nodes.push(n);
       if (parent) edges.push([parent, n]);
     })(root, 0, null);
-    return { nodes, edges, NX, NY };
+    return { nodes, edges, TB };
   }
 
   // 트리 전체 노드 평탄화(접힘 무시) — 검색/통계용.
@@ -74,5 +80,5 @@
   }
 
   BTV.core = BTV.core || {};
-  Object.assign(BTV.core, { buildTreeFromXml, buildNodesMap, layout, flatten, pathToRoot, NX, NY });
+  Object.assign(BTV.core, { buildTreeFromXml, buildNodesMap, layout, flatten, pathToRoot });
 })(window.BTV = window.BTV || {});

@@ -16,6 +16,18 @@
     applyTheme(cur === 'dark' ? 'light' : 'dark'); BTV.toast(cur === 'dark' ? '화이트 테마' : '블랙 테마');
   }
 
+  /* ---- 트리 방향 (LR 좌우 / TB 위아래, localStorage 영속) ---- */
+  function applyOrient(o, rebuild) {
+    store.state.orient = o;
+    try { localStorage.setItem('btv-orient', o); } catch (e) {}
+    const btn = $('orientBtn'); if (btn) btn.textContent = o === 'TB' ? '↕' : '↔';
+    if (rebuild && store.active) { store.setOrient(o); BTV.graph && BTV.graph.fit(); }
+  }
+  function toggleOrient() {
+    const next = (store.state.orient === 'TB') ? 'LR' : 'TB';
+    applyOrient(next, true); BTV.toast(next === 'TB' ? '위아래 보기' : '좌우 보기');
+  }
+
   /* ---- 토스트 ---- */
   let toastTimer = null;
   BTV.toast = function (msg) {
@@ -97,6 +109,7 @@
       { ic: '💾', label: '현재 세션 JSON 저장', sub: 'export', run: exportJson },
       { ic: '🖼', label: '트리 SVG 저장', sub: 'snapshot', run: exportSVG },
       { ic: '📸', label: '트리 PNG 저장', sub: '현재 화면', run: exportPNG },
+      { ic: '🔀', label: '트리 방향 전환 (좌우/위아래)', sub: 'o', run: toggleOrient },
       { ic: '🌗', label: '화이트/블랙 테마 전환', sub: 't', run: toggleTheme },
       { ic: '⚙', label: '디버그 기능 설정 열기', sub: '토글', run: () => openSheet('settings') },
     ];
@@ -189,6 +202,7 @@
     else if (e.key === ' ') { e.preventDefault(); BTV.transport.play(); }
     else if (e.key.toLowerCase() === 'f') BTV.graph && BTV.graph.fit();
     else if (e.key.toLowerCase() === 't') toggleTheme();
+    else if (e.key.toLowerCase() === 'o') toggleOrient();
     else if (e.key.toLowerCase() === 'b') store.toggleBookmark();
     else if (e.key === '/') { e.preventDefault(); $('searchInput') && $('searchInput').focus(); }
   }
@@ -202,6 +216,8 @@
   function boot() {
     let saved = 'light'; try { saved = localStorage.getItem('btv-theme') || 'light'; } catch (e) {}
     applyTheme(saved);
+    let savedOrient = 'LR'; try { savedOrient = localStorage.getItem('btv-orient') || 'LR'; } catch (e) {}
+    applyOrient(savedOrient, false);   // 첫 로드 시 build 가 store.state.orient 를 읽음
     BTV.features.forEach(f => { if (!(f.id in store.state.features)) store.state.features[f.id] = f.default; });
     BTV.mountGraph($('svg'));
     BTV.mountMinimap($('minimapSvg'));
@@ -214,6 +230,7 @@
     $('sessionSel').onchange = e => { BTV.transport.stop(); store.setActive(+e.target.value); };
     $('mergeBtn').onclick = doMerge;
     $('themeBtn').onclick = toggleTheme;
+    $('orientBtn').onclick = toggleOrient;
     $('settingsBtn').onclick = () => openSheet('settings');
     $('paletteBtn').onclick = openPalette;
     $('dockToggle').onclick = () => $('dock').classList.toggle('collapsed');
