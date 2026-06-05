@@ -27,6 +27,11 @@ xdg-open index.html
 #   진입화면 "실시간 추적" → 경로 입력 → 연결.  (?live=/tmp/bt_execution.btlog 로 자동연결도 가능)
 ```
 
+실시간 추적은 진입 폼에서 경로를 여러 개 넣고:
+- **각각 추적** — 파일마다 별도 라이브 세션(드롭다운으로 전환, 백그라운드도 독립 성장).
+- **⛓ 통합 추적** — 여러 `.btlog` 를 **하나의 라이브 타임라인으로** 실시간 합쳐 봄(레이어 `L0`/`L1` namespace,
+  wall-clock 으로 정렬). 같은 머신의 epoch-µs 시간축 공유가 전제. 2계층(MoveTree+NavSingle) 동시 관찰에 적합.
+
 > 실시간 추적 메커니즘: `live_server.py` 가 지정 `.btlog` 를 tail-follow 하여 헤더(트리)와
 > 새 전이를 SSE 로 보내고, 뷰어는 받는 즉시 타임라인에 누적·색칠한다. `● LIVE` 칩으로
 > 최신 추종 on/off. FileLogger2 는 async writer + 버퍼라 디스크 반영이 청크 단위(거의 실시간)이며,

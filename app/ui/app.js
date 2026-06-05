@@ -95,6 +95,43 @@
     es.onerror = () => { /* EventSource 자동 재연결 */ };
     hideLanding();
   }
+  // 통합 추적: 여러 .btlog 를 하나의 라이브 세션으로. 각 EventSource 가 레이어별로 직접 먹임.
+  function connectMergeLive(paths) {
+    if (location.protocol === 'file:') {
+      $('liveHint').innerHTML = '⚠ 실시간 추적은 로컬 서버가 필요합니다 (<code>./serve.sh</code>).'; return;
+    }
+    paths = [...new Set(paths.filter(Boolean))];
+    if (paths.length < 1) { BTV.toast('경로를 입력하세요'); return; }
+    if (paths.length === 1) { connectLive(paths[0]); return; }   // 1개면 그냥 단일
+    closeLive();
+    const m = store.startLiveMerge(paths);
+    hideLanding();
+    BTV.toast('통합 추적: ' + paths.length + '개');
+    paths.forEach((path, i) => {
+      const es = new EventSource('/live?path=' + encodeURIComponent(path));
+      liveConns.push({ es, path, merge: true });
+      es.addEventListener('init', e => {
+        const d = JSON.parse(e.data);
+        try { store.liveMergeInit(m, i, d.xml, d.firstTs, d.path); if (store.active === m) BTV.graph && BTV.graph.fit(); }
+        catch (err) { BTV.toast('트리 파싱 실패: ' + err.message); }
+        renderLiveConns();
+      });
+      es.addEventListener('append', e => store.liveMergeAppend(m, i, JSON.parse(e.data).t));
+      es.addEventListener('status', e => BTV.toast('실시간: ' + JSON.parse(e.data).msg));
+      es.onerror = () => {};
+    });
+    renderLiveConns();
+  }
+  function gatherLivePaths() {
+    return [...document.querySelectorAll('#livePaths .livePath')].map(i => i.value.trim()).filter(Boolean);
+  }
+  function addLivePathRow() {
+    const wrap = $('livePaths'), row = document.createElement('div');
+    row.className = 'row live-path-row'; row.style.cssText = 'gap:8px;margin-bottom:6px';
+    row.innerHTML = '<input class="input livePath" placeholder="/tmp/nav_single_internal.btlog" style="flex:1"><button class="btn ghost icon live-rm" title="경로 제거">✕</button>';
+    row.querySelector('.live-rm').onclick = () => { if (document.querySelectorAll('#livePaths .live-path-row').length > 1) row.remove(); };
+    wrap.appendChild(row);
+  }
 
   /* ---- 파일 적재 ---- */
   function ingestFile(file) {
@@ -318,14 +355,17 @@
     $('modeRecord').onclick = () => { closeLive(); hideLanding(); $('fileInput').click(); };
     $('modeLive').onclick = () => {
       $('liveForm').style.display = ''; $('modeLive').classList.add('sel'); $('modeRecord').classList.remove('sel');
-      if (!$('livePath').value) $('livePath').value = '/tmp/bt_execution.btlog';
+      const first = document.querySelector('#livePaths .livePath');
+      if (first && !first.value) first.value = '/tmp/bt_execution.btlog';
       renderLiveConns();
       $('liveHint').innerHTML = location.protocol === 'file:'
         ? '⚠ 실시간 추적은 로컬 서버 필요: <code>./serve.sh --watch &lt;경로&gt;</code> 실행 후 접속'
-        : '여러 .btlog 를 추가하면 <b>동시에 각각 추적</b>됩니다. 상단 <b>세션 드롭다운</b>으로 전환하며 보세요. 서버가 각 경로를 tail-follow 합니다.';
+        : '<b>각각 추적</b>=파일마다 별도 세션(드롭다운 전환) · <b>⛓ 통합 추적</b>=여러 .btlog 를 한 타임라인으로 실시간 합쳐 봄. 같은 머신의 epoch-µs 시간축을 공유해야 정확.';
     };
-    $('liveConnect').onclick = () => connectLive($('livePath').value.trim());
-    $('livePath').onkeydown = e => { if (e.key === 'Enter') connectLive($('livePath').value.trim()); };
+    $('liveAddPath').onclick = addLivePathRow;
+    document.querySelector('#livePaths .live-rm').onclick = () => { if (document.querySelectorAll('#livePaths .live-path-row').length > 1) document.querySelector('#livePaths .live-path-row').remove(); };
+    $('liveConnectEach').onclick = () => { const ps = gatherLivePaths(); if (!ps.length) return BTV.toast('경로를 입력하세요'); ps.forEach(connectLive); };
+    $('liveConnectMerge').onclick = () => connectMergeLive(gatherLivePaths());
     $('liveChip').onclick = () => store.setFollow(!store.state.follow);
     $('homeBtn').onclick = showLanding;
     $('landingClose').onclick = dismissLanding;

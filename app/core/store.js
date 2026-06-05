@@ -51,8 +51,8 @@
       state.activeIndex = i;
       const s = state.sessions[i];
       state.live = !!s._live;
-      this.ensureDerived(s);
-      if (s._live) s._density = C.densityBuckets(s.timeline, 160);  // 백그라운드 성장분 반영
+      if (s._liveMerge) this.rebuildMerged(s);       // 통합 라이브: 레이어 버퍼로 재구성
+      else { this.ensureDerived(s); if (s._live) s._density = C.densityBuckets(s.timeline, 160); }
       state.seq = s._seq; state.stats = s._stats; state.density = s._density;
       state.collapsed = new Set();
       state.selectedUid = null; state.loopAB = null; state.bookmarks = [];
@@ -137,9 +137,55 @@
     },
     commitGrow() {
       const s = this.active; if (!s) return;
-      s._density = state.density = C.densityBuckets(s.timeline, 160);
+      if (s._liveMerge) { this.rebuildMerged(s); state.seq = s._seq; state.stats = s._stats; state.density = s._density; }
+      else { s._density = state.density = C.densityBuckets(s.timeline, 160); }
       emit('grow', s);
       if (state.follow) this.setIdx(s.timeline.length - 1); else emit('render', state.idx);
+    },
+
+    /* ---- 통합 실시간(여러 .btlog 를 한 타임라인으로) ---- */
+    // 항상 정확: 레이어별 버퍼(rows)를 concat+sort 로 통째 재구성 → 인덱스 꼬임 0.
+    rebuildMerged(m) {
+      let tl = [];
+      m._layers.forEach(L => { if (L.rows.length) tl = tl.concat(L.rows); });
+      tl.sort((a, b) => a[0] - b[0]);
+      m.timeline = tl;
+      m._seq = C.buildSeq(tl); m._stats = C.nodeStats(tl); m._density = C.densityBuckets(tl, 160);
+      m.meta.count = tl.length;
+      if (tl.length) { m.meta.t0 = tl[0][0]; m.meta.t1 = tl[tl.length - 1][0]; }
+    },
+    startLiveMerge(paths) {
+      const m = { _live: true, _liveMerge: true,
+        _layers: paths.map(p => ({ path: p, treeName: null, tree: null, nodes: {}, rows: [] })),
+        _seq: new Map(), _stats: {}, _density: [],
+        meta: { tree: 'MERGED', session: 'live-merge', date: '', source: 'live', t0: 0, t1: 0, count: 0,
+                file: '⛓🔴 ' + paths.map(p => p.split('/').pop()).join(' + ') },
+        tree: { uid: null, type: '(merged)', name: 'MERGED (실시간)', children: [] }, nodes: {}, timeline: [], expected: null };
+      state.sessions.push(m); emit('sessions', state.sessions);
+      state.follow = true; this.setActive(state.sessions.length - 1);
+      return m;
+    },
+    liveMergeInit(m, i, xml, firstTs, path) {
+      const { tree, treeName } = C.buildTreeFromXml(xml);
+      const ns = u => `L${i}:${u}`;
+      const clone = n => ({ ...n, uid: n.uid != null ? ns(n.uid) : null, children: (n.children || []).map(clone) });
+      const L = m._layers[i];
+      L.treeName = treeName; L.tree = tree ? clone(tree) : null; L.rows = [];   // 새 run → 레이어 리셋
+      L.nodes = {}; Object.entries(C.buildNodesMap(tree)).forEach(([u, fp]) => { L.nodes[ns(u)] = `L${i}/${fp}`; });
+      m.nodes = {}; m._layers.forEach(x => Object.assign(m.nodes, x.nodes));
+      m.tree.children = m._layers.map((x, li) => ({ uid: null, type: '(layer)',
+        name: `▼ L${li} · ${x.treeName || x.path.split('/').pop()}`, children: x.tree ? [x.tree] : [] }));
+      if (!m.meta.t0) m.meta.t0 = firstTs;
+      if (!m.meta.date) m.meta.date = C.utcDate(firstTs);
+      m.meta.tree = m._layers.map(x => x.treeName).filter(Boolean).join('+') || 'MERGED';
+      if (m === this.active) { this.rebuildMerged(m); state.seq = m._seq; state.stats = m._stats; state.density = m._density;
+        emit('load', m); emit('render', state.idx); }
+    },
+    liveMergeAppend(m, i, trs) {
+      if (!trs || !trs.length) return;
+      const L = m._layers[i], ns = u => `L${i}:${u}`;
+      trs.forEach(tr => L.rows.push([tr[0], ns(tr[1]), tr[2], 0]));
+      if (m === this.active && !growTimer) growTimer = setTimeout(() => { growTimer = null; this.commitGrow(); }, 200);
     },
     setFollow(b) { state.follow = !!b; emit('follow', state.follow); if (b) this.setIdx((this.active ? this.active.timeline.length - 1 : 0)); },
 
