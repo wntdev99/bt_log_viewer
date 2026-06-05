@@ -281,6 +281,8 @@
     applyTheme(saved);
     let savedOrient = 'LR'; try { savedOrient = localStorage.getItem('btv-orient') || 'LR'; } catch (e) {}
     applyOrient(savedOrient, false);   // 첫 로드 시 build 가 store.state.orient 를 읽음
+    let fz; try { fz = localStorage.getItem('btv-followzoom'); } catch (e) {}
+    if (fz) { store.state.followZoom = +fz; $('followZoom').value = fz; }
     BTV.features.forEach(f => { if (!(f.id in store.state.features)) store.state.features[f.id] = f.default; });
     BTV.mountGraph($('svg'));
     BTV.mountMinimap($('minimapSvg'));
@@ -327,6 +329,16 @@
     $('liveChip').onclick = () => store.setFollow(!store.state.follow);
     $('homeBtn').onclick = showLanding;
     $('landingClose').onclick = dismissLanding;
+    // 자동 따라가기 줌 레벨: follow_cam 켤 때만 노출, 변경 시 즉시 반영
+    const updateFollowZoomVis = () => { $('followZoomWrap').style.display = store.state.features.follow_cam ? '' : 'none'; };
+    $('followZoom').onchange = e => {
+      store.setFollowZoom(+e.target.value);
+      try { localStorage.setItem('btv-followzoom', e.target.value); } catch (_) {}
+      const s = store.active;
+      if (store.state.features.follow_cam && s && s.timeline[store.state.idx]) BTV.graph.panToUid(s.timeline[store.state.idx][1], store.state.followZoom);
+    };
+    store.on('feature', ev => { if (ev.id === 'follow_cam') updateFollowZoomVis(); });
+    updateFollowZoomVis();
     $('landing').addEventListener('mousedown', e => { if (e.target === $('landing')) dismissLanding(); });
 
     // 드래그&드롭

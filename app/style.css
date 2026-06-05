@@ -111,6 +111,10 @@ button, input, select { font-family: inherit; font-size: inherit; color: inherit
 .select, .input { height: 34px; padding: 0 10px; background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-sm); color: var(--text); cursor: pointer; transition: border-color .12s; }
 .select:focus, .input:focus { outline: none; border-color: var(--accent); }
+.select.sm { height: 28px; padding: 0 8px; font-size: 12px; }
+.stage-tools .field { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 0 8px; height: 34px; box-shadow: var(--shadow-1); gap: 6px; }
+.stage-tools .field .select.sm { border: none; box-shadow: none; height: 30px; padding: 0 4px; }
 .input { cursor: text; }
 .field { display: inline-flex; align-items: center; gap: 6px; }
 

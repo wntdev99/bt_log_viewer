@@ -10,6 +10,7 @@
     sessions: [], activeIndex: -1,
     idx: 0, playing: false, mode: 'tick', speed: 1, orient: 'LR',
     live: false, follow: true,           // 실시간 추적 모드 / 최신 시점 자동 추종
+    followZoom: 1300,                    // 자동 따라가기(F7) 줌 레벨 = viewBox 폭(world px)
     selectedUid: null, hoverUid: null,
     collapsed: new Set(),          // 접힌 SubTree uid 문자열
     features: {},                  // featureId -> bool
@@ -71,6 +72,7 @@
     setMode(m) { state.mode = m; emit('config'); },
     setSpeed(s) { state.speed = +s; emit('config'); },
     setOrient(o) { state.orient = o; if (this.active) { emit('load', this.active); emit('render', state.idx); } },
+    setFollowZoom(w) { state.followZoom = +w; emit('config'); },
 
     toggleCollapse(uid) {
       uid = String(uid);

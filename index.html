@@ -40,6 +40,16 @@
     <svg id="svg"></svg>
     <div class="stage-tools">
       <button class="btn icon" id="fitBtn" title="화면 맞춤 (f)">🎯</button>
+      <label class="field" id="followZoomWrap" style="display:none">
+        <span class="muted" style="font-size:11px">따라가기 줌</span>
+        <select class="select sm" id="followZoom" title="자동 따라가기 시 확대 배율">
+          <option value="520">아주 가까이</option>
+          <option value="900">가까이</option>
+          <option value="1300" selected>보통</option>
+          <option value="2200">넓게</option>
+          <option value="3600">아주 넓게</option>
+        </select>
+      </label>
     </div>
     <div id="minimap"><svg id="minimapSvg"></svg></div>
     <div id="toast" class="toast"></div>

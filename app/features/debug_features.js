@@ -90,8 +90,8 @@
   /* F7 — 자동 따라가기: 현재 전이 노드로 카메라 팬. */
   reg({
     id: 'follow_cam', label: '자동 따라가기', group: '카메라', default: false,
-    desc: '재생 중 현재 전이 노드로 화면을 이동',
-    onRender(ctx) { if (ctx.on && advanced(ctx)) { const tr = ctx.store.active.timeline[ctx.idx]; tr && ctx.graph.panToUid(tr[1]); } },
+    desc: '재생 중 현재 전이 노드로 화면 이동 (좌상단에서 줌 레벨 선택)',
+    onRender(ctx) { if (ctx.on && advanced(ctx)) { const tr = ctx.store.active.timeline[ctx.idx]; tr && ctx.graph.panToUid(tr[1], ctx.store.state.followZoom); } },
   });
 
   /* F8 — 미진입 노드 흐리게: 세션 동안 한 번도 전이 없던 노드 dim. */

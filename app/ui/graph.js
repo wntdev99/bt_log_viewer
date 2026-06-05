@@ -123,9 +123,14 @@
     else { const h = vb.w / ar; vb.y -= (h - vb.h) / 2; vb.h = h; }
     applyVB();
   }
-  function panToUid(uid) {
+  // uid 로 카메라 이동. targetW(viewBox 폭, world px)를 주면 그 배율로 줌까지 맞춘다(화면비 유지).
+  function panToUid(uid, targetW) {
     const o = rectByUid.get(String(uid)); if (!o) return;
-    vb.x = o.node._x + NW / 2 - vb.w / 2; vb.y = o.node._y - vb.h / 2; applyVB();
+    if (targetW && targetW > 0) {
+      const r = svg.getBoundingClientRect(), ar = (r.width / r.height) || 1.6;
+      vb.w = targetW; vb.h = targetW / ar;
+    }
+    vb.x = o.node._x + NW / 2 - vb.w / 2; vb.y = o.node._y + NH / 2 - vb.h / 2; applyVB();
   }
   function zoomAt(cx, cy, f) {
     const r = svg.getBoundingClientRect();
