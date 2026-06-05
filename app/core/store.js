@@ -35,19 +35,29 @@
       emit('sessions', state.sessions);
       this.setActive(first ? 0 : base);          // 새로 추가된 첫 세션으로
     },
+    // 파생 캐시(seq/stats/density)는 세션 객체에 보관 → 여러 라이브 세션이 동시에
+    // 백그라운드로 독립 누적될 수 있다. 활성 세션의 캐시를 state.* 로 가리킨다.
+    ensureDerived(s) {
+      if (!s._seq) {
+        s._seq = C.buildSeq(s.timeline);
+        s._stats = C.nodeStats(s.timeline);
+        s._density = C.densityBuckets(s.timeline, 160);
+      }
+      return s;
+    },
     setActive(i) {
       if (i < 0 || i >= state.sessions.length) return;
       state.activeIndex = i;
-      state.live = !!state.sessions[i]._live;
       const s = state.sessions[i];
+      state.live = !!s._live;
+      this.ensureDerived(s);
+      if (s._live) s._density = C.densityBuckets(s.timeline, 160);  // 백그라운드 성장분 반영
+      state.seq = s._seq; state.stats = s._stats; state.density = s._density;
       state.collapsed = new Set();
-      state.seq = C.buildSeq(s.timeline);
-      state.stats = C.nodeStats(s.timeline);
-      state.density = C.densityBuckets(s.timeline, 160);
       state.selectedUid = null; state.loopAB = null; state.bookmarks = [];
-      state.idx = 0;
+      state.idx = s._live && state.follow ? Math.max(0, s.timeline.length - 1) : 0;
       emit('load', s);
-      emit('render', 0);
+      emit('render', state.idx);
     },
     setIdx(i) {
       const s = this.active; if (!s) return;
@@ -95,35 +105,37 @@
     /* ---- 실시간 추적 ---- */
     // 새 실시간 세션 시작 (.btlog 헤더의 xml + first_ts). 트리는 한 번만 빌드(구조 고정),
     // 전이는 appendLive 로 스트리밍. 같은 트리면 그래프는 1회만 build 된다.
-    startLiveSession(xml, firstTs, file) {
+    // 새 실시간 세션을 만들고 세션 객체를 반환(연결마다 1개). 여러 개 동시 가능.
+    // makeActive=true 면 새로 만든 세션으로 전환(보통 새 연결 시 보여줌).
+    startLiveSession(xml, firstTs, file, makeActive) {
       const { tree, treeName } = C.buildTreeFromXml(xml);
-      const s = { _live: true,
+      const s = { _live: true, _seq: new Map(), _stats: {}, _density: [],
         meta: { tree: treeName, session: 'live', date: C.utcDate(firstTs), source: 'live',
                 t0: firstTs, t1: firstTs, count: 0, file: '🔴 ' + (file || 'live') },
         tree, nodes: C.buildNodesMap(tree), timeline: [], expected: null };
-      state.sessions.push(s); state.activeIndex = state.sessions.length - 1;
-      state.live = true; state.follow = true;
-      state.collapsed = new Set(); state.seq = new Map(); state.stats = {}; state.density = [];
-      state.selectedUid = null; state.loopAB = null; state.bookmarks = []; state.idx = 0;
-      emit('sessions', state.sessions); emit('load', s); emit('render', 0);
+      state.sessions.push(s);
+      emit('sessions', state.sessions);
+      if (makeActive !== false) { state.follow = true; this.setActive(state.sessions.length - 1); }
+      return s;
     },
-    appendLive(trs) {
-      const s = this.active; if (!s || !trs || !trs.length) return;
+    // 특정 세션(s)에 전이 누적. s 가 비활성이어도 자체 캐시에 쌓이고, 활성일 때만 UI 갱신.
+    appendLiveTo(s, trs) {
+      if (!s || !trs || !trs.length) return;
       const base = s.timeline.length;
       trs.forEach((tr, k) => {
         const i = base + k; s.timeline.push([tr[0], tr[1], tr[2], 0]);
         const uid = String(tr[1]);
-        if (!state.seq.has(uid)) state.seq.set(uid, []);
-        state.seq.get(uid).push([i, tr[2]]);
-        const st = state.stats[uid] || (state.stats[uid] = { run: 0, succ: 0, fail: 0, skip: 0, total: 0, durSum: 0, durMax: 0, durCnt: 0 });
+        if (!s._seq.has(uid)) s._seq.set(uid, []);
+        s._seq.get(uid).push([i, tr[2]]);
+        const st = s._stats[uid] || (s._stats[uid] = { run: 0, succ: 0, fail: 0, skip: 0, total: 0, durSum: 0, durMax: 0, durCnt: 0 });
         st.total++; if (tr[2] === 1) st.run++; else if (tr[2] === 2) st.succ++; else if (tr[2] === 3) st.fail++; else if (tr[2] === 4) st.skip++;
       });
       s.meta.count = s.timeline.length; s.meta.t1 = s.timeline[s.timeline.length - 1][0];
-      if (!growTimer) growTimer = setTimeout(() => { growTimer = null; this.commitGrow(); }, 160);
+      if (s === this.active && !growTimer) growTimer = setTimeout(() => { growTimer = null; this.commitGrow(); }, 160);
     },
     commitGrow() {
       const s = this.active; if (!s) return;
-      state.density = C.densityBuckets(s.timeline, 160);
+      s._density = state.density = C.densityBuckets(s.timeline, 160);
       emit('grow', s);
       if (state.follow) this.setIdx(s.timeline.length - 1); else emit('render', state.idx);
     },

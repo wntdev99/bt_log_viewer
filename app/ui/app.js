@@ -35,8 +35,8 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
   };
 
-  /* ---- 진입 모드 / 실시간 추적 ---- */
-  let liveES = null;
+  /* ---- 진입 모드 / 실시간 추적 (다중 파일 동시 가능) ---- */
+  let liveConns = [];   // [{ es, session, path }] — 파일마다 하나씩, 각각 독립 세션
   function showLanding() {
     $('landing').classList.add('show'); $('liveForm').style.display = 'none';
     document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('sel'));
@@ -45,12 +45,25 @@
   }
   function hideLanding() { $('landing').classList.remove('show'); }
   function dismissLanding() { if (store.state.sessions.length) hideLanding(); }
-  function closeLive() { if (liveES) { liveES.close(); liveES = null; } }
+  function closeLive() { liveConns.forEach(c => c.es.close()); liveConns = []; renderLiveConns(); }
+  function disconnectLive(path) {
+    const i = liveConns.findIndex(c => c.path === path); if (i < 0) return;
+    liveConns[i].es.close(); liveConns.splice(i, 1); renderLiveConns(); BTV.toast('연결 해제: ' + path);
+  }
+  function renderLiveConns() {
+    const box = $('liveConns'); if (!box) return;
+    box.innerHTML = liveConns.length
+      ? '<div class="muted" style="margin:8px 0 4px">연결됨 ' + liveConns.length + '개</div>' + liveConns.map(c =>
+          `<div class="row" style="gap:6px;padding:3px 0"><span class="tag fail">●</span><span class="mono" style="flex:1;font-size:11px">${c.path}</span><button class="btn ghost icon sm" data-dc="${encodeURIComponent(c.path)}">✕</button></div>`).join('')
+      : '';
+    box.querySelectorAll('[data-dc]').forEach(b => b.onclick = () => disconnectLive(decodeURIComponent(b.dataset.dc)));
+  }
   function refreshLiveChip() {
     const chip = $('liveChip');
     if (!store.state.live) { chip.style.display = 'none'; return; }
     chip.style.display = '';
-    if (store.state.follow) { chip.className = 'live-chip following'; chip.textContent = '● LIVE 추종'; }
+    const n = liveConns.length;
+    if (store.state.follow) { chip.className = 'live-chip following'; chip.textContent = '● LIVE 추종' + (n > 1 ? ` (${n})` : ''); }
     else { chip.className = 'live-chip paused'; chip.textContent = '⏸ 정지 (스크럽됨)'; }
   }
   function connectLive(path) {
@@ -59,17 +72,28 @@
       return;
     }
     if (!path) { BTV.toast('파일 경로를 입력하세요'); return; }
-    closeLive(); hideLanding();
-    const es = new EventSource('/live?path=' + encodeURIComponent(path)); liveES = es;
+    const dup = liveConns.find(c => c.path === path);
+    if (dup) {   // 이미 연결됨 → 그 세션으로 전환
+      const idx = store.state.sessions.indexOf(dup.session);
+      if (idx >= 0) store.setActive(idx);
+      hideLanding(); BTV.toast('이미 연결됨: ' + path); return;
+    }
+    const conn = { es: null, session: null, path };
+    const es = new EventSource('/live?path=' + encodeURIComponent(path)); conn.es = es;
+    liveConns.push(conn); renderLiveConns();
     BTV.toast('실시간 연결: ' + path);
     es.addEventListener('init', e => {
       const d = JSON.parse(e.data);
-      try { store.startLiveSession(d.xml, d.firstTs, d.path); BTV.graph && BTV.graph.fit(); }
+      // 파일이 새로 생성될 때마다 init 재수신 → 매 run 을 새 세션으로(이 연결이 활성이면 따라감).
+      const wasActive = !conn.session || store.active === conn.session;
+      try { conn.session = store.startLiveSession(d.xml, d.firstTs, d.path, wasActive); if (wasActive) BTV.graph && BTV.graph.fit(); }
       catch (err) { BTV.toast('트리 파싱 실패: ' + err.message); }
+      renderLiveConns();
     });
-    es.addEventListener('append', e => store.appendLive(JSON.parse(e.data).t));
-    es.addEventListener('status', e => { const d = JSON.parse(e.data); $('liveHint') && (void 0); BTV.toast('실시간: ' + d.msg); });
+    es.addEventListener('append', e => { if (conn.session) store.appendLiveTo(conn.session, JSON.parse(e.data).t); });
+    es.addEventListener('status', e => BTV.toast('실시간: ' + JSON.parse(e.data).msg));
     es.onerror = () => { /* EventSource 자동 재연결 */ };
+    hideLanding();
   }
 
   /* ---- 파일 적재 ---- */
@@ -293,9 +317,10 @@
     $('modeLive').onclick = () => {
       $('liveForm').style.display = ''; $('modeLive').classList.add('sel'); $('modeRecord').classList.remove('sel');
       if (!$('livePath').value) $('livePath').value = '/tmp/bt_execution.btlog';
+      renderLiveConns();
       $('liveHint').innerHTML = location.protocol === 'file:'
         ? '⚠ 실시간 추적은 로컬 서버 필요: <code>./serve.sh --watch &lt;경로&gt;</code> 실행 후 접속'
-        : '서버가 해당 경로의 .btlog 를 tail-follow 합니다. (FileLogger2 가 기록 중이어야 함)';
+        : '여러 .btlog 를 추가하면 <b>동시에 각각 추적</b>됩니다. 상단 <b>세션 드롭다운</b>으로 전환하며 보세요. 서버가 각 경로를 tail-follow 합니다.';
     };
     $('liveConnect').onclick = () => connectLive($('livePath').value.trim());
     $('livePath').onkeydown = e => { if (e.key === 'Enter') connectLive($('livePath').value.trim()); };
