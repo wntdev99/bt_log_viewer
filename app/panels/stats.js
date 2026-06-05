@@ -42,7 +42,7 @@
       el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
         kind = b.dataset.k; el.querySelectorAll('[data-k]').forEach(x => x.setAttribute('aria-pressed', x.dataset.k === kind)); render();
       });
-      store.on('load', render); store.on('render', () => {/* 통계는 세션 단위 — render 마다 갱신 불필요 */});
+      store.on('load', render); store.on('grow', render);
       render();
     },
   });

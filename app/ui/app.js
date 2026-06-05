@@ -35,8 +35,43 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
   };
 
+  /* ---- 진입 모드 / 실시간 추적 ---- */
+  let liveES = null;
+  function showLanding() {
+    $('landing').classList.add('show'); $('liveForm').style.display = 'none';
+    document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('sel'));
+  }
+  function hideLanding() { $('landing').classList.remove('show'); }
+  function closeLive() { if (liveES) { liveES.close(); liveES = null; } }
+  function refreshLiveChip() {
+    const chip = $('liveChip');
+    if (!store.state.live) { chip.style.display = 'none'; return; }
+    chip.style.display = '';
+    if (store.state.follow) { chip.className = 'live-chip following'; chip.textContent = '● LIVE 추종'; }
+    else { chip.className = 'live-chip paused'; chip.textContent = '⏸ 정지 (스크럽됨)'; }
+  }
+  function connectLive(path) {
+    if (location.protocol === 'file:') {
+      $('liveHint').innerHTML = '⚠ 실시간 추적은 로컬 서버가 필요합니다.<br>터미널에서 <code>./serve.sh --watch ' + (path || '/tmp/bt_execution.btlog') + '</code> 실행 후 <b>http://localhost:8777</b> 로 접속하세요.';
+      return;
+    }
+    if (!path) { BTV.toast('파일 경로를 입력하세요'); return; }
+    closeLive(); hideLanding();
+    const es = new EventSource('/live?path=' + encodeURIComponent(path)); liveES = es;
+    BTV.toast('실시간 연결: ' + path);
+    es.addEventListener('init', e => {
+      const d = JSON.parse(e.data);
+      try { store.startLiveSession(d.xml, d.firstTs, d.path); BTV.graph && BTV.graph.fit(); }
+      catch (err) { BTV.toast('트리 파싱 실패: ' + err.message); }
+    });
+    es.addEventListener('append', e => store.appendLive(JSON.parse(e.data).t));
+    es.addEventListener('status', e => { const d = JSON.parse(e.data); $('liveHint') && (void 0); BTV.toast('실시간: ' + d.msg); });
+    es.onerror = () => { /* EventSource 자동 재연결 */ };
+  }
+
   /* ---- 파일 적재 ---- */
   function ingestFile(file) {
+    closeLive();                          // 녹화본 적재 시 실시간 연결 종료
     const n = file.name.toLowerCase(), r = new FileReader();
     if (n.endsWith('.btlog')) {
       r.onload = () => { try { store.addSessions([C.sessionFromBtlog(file.name, r.result)]); BTV.toast('불러옴: ' + file.name); } catch (e) { BTV.toast('btlog 파싱 실패: ' + e.message); } };
@@ -102,6 +137,7 @@
   /* ---- 명령 팔레트 (⌘K) ---- */
   function actions() {
     const a = [
+      { ic: '🏠', label: '시작 화면 (모드 선택)', sub: '녹화본/실시간', run: showLanding },
       { ic: '📂', label: '파일 열기', sub: '.btlog / .session.json', run: () => $('fileInput').click() },
       { ic: '🎯', label: '화면 맞춤(Fit)', sub: 'f', run: () => BTV.graph && BTV.graph.fit() },
       { ic: '⏯', label: '재생 / 일시정지', sub: 'Space', run: () => BTV.transport.play() },
@@ -241,10 +277,26 @@
 
     // 메타 칩 갱신
     store.on('load', s => {
+      hideLanding();
       $('metaChip').textContent = `${s.meta.tree} · 노드 ${Object.keys(s.nodes).length} · 전이 ${s.meta.count} · ${((s.meta.t1 - s.meta.t0) / 1e6).toFixed(1)}s · ${s.meta.source}`;
-      refreshSessions();
+      refreshSessions(); refreshLiveChip();
     });
+    store.on('grow', s => { $('metaChip').textContent = `${s.meta.tree} · 노드 ${Object.keys(s.nodes).length} · 전이 ${s.meta.count} · ${((s.meta.t1 - s.meta.t0) / 1e6).toFixed(1)}s · live`; });
+    store.on('follow', refreshLiveChip);
     store.on('sessions', refreshSessions);
+
+    // 진입 화면 + 실시간 폼
+    $('modeRecord').onclick = () => { closeLive(); hideLanding(); $('fileInput').click(); };
+    $('modeLive').onclick = () => {
+      $('liveForm').style.display = ''; $('modeLive').classList.add('sel'); $('modeRecord').classList.remove('sel');
+      if (!$('livePath').value) $('livePath').value = '/tmp/bt_execution.btlog';
+      $('liveHint').innerHTML = location.protocol === 'file:'
+        ? '⚠ 실시간 추적은 로컬 서버 필요: <code>./serve.sh --watch &lt;경로&gt;</code> 실행 후 접속'
+        : '서버가 해당 경로의 .btlog 를 tail-follow 합니다. (FileLogger2 가 기록 중이어야 함)';
+    };
+    $('liveConnect').onclick = () => connectLive($('livePath').value.trim());
+    $('livePath').onkeydown = e => { if (e.key === 'Enter') connectLive($('livePath').value.trim()); };
+    $('liveChip').onclick = () => store.setFollow(!store.state.follow);
 
     // 드래그&드롭
     window.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('drag-over'); });
@@ -252,12 +304,15 @@
     window.addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('drag-over'); Array.from(e.dataTransfer.files).forEach(ingestFile); });
     window.addEventListener('keydown', onKey);
 
-    // URL 자동 로드
+    // URL 자동 로드: ?data= / ?btlog= (녹화본) · ?live=<경로> (실시간)
     const qs = new URLSearchParams(location.search);
-    if (qs.get('data')) fetch(qs.get('data')).then(r => r.json()).then(j => store.addSessions(C.sessionsFromJson(j, qs.get('data').split('/').pop()))).catch(() => {});
-    if (qs.get('btlog')) fetch(qs.get('btlog')).then(r => r.arrayBuffer()).then(b => store.addSessions([C.sessionFromBtlog(qs.get('btlog').split('/').pop(), b)])).catch(() => {});
+    let auto = false;
+    if (qs.get('data')) { auto = true; fetch(qs.get('data')).then(r => r.json()).then(j => store.addSessions(C.sessionsFromJson(j, qs.get('data').split('/').pop()))).catch(() => {}); }
+    if (qs.get('btlog')) { auto = true; fetch(qs.get('btlog')).then(r => r.arrayBuffer()).then(b => store.addSessions([C.sessionFromBtlog(qs.get('btlog').split('/').pop(), b)])).catch(() => {}); }
+    if (qs.get('live')) { auto = true; connectLive(qs.get('live')); }
 
     refreshSessions();
+    if (!auto) showLanding();             // 진입 시 모드 선택
   }
   window.addEventListener('DOMContentLoaded', boot);
 })(window.BTV = window.BTV || {});

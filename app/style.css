@@ -73,6 +73,25 @@ button, input, select { font-family: inherit; font-size: inherit; color: inherit
   display: grid; place-items: center; color: #fff; font-size: 13px; box-shadow: var(--shadow-1); }
 .topbar-spacer { flex: 1; }
 .meta-chip { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* 실시간 칩 */
+@keyframes blinkdot { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+.live-chip { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 12px;
+  border: 1px solid var(--failure); color: var(--failure); background: var(--failure-weak);
+  border-radius: var(--r-pill); font-weight: 700; font-size: 12px; cursor: pointer; }
+.live-chip.following { animation: blinkdot 1.1s ease-in-out infinite; }
+.live-chip.paused { border-color: var(--line-2); color: var(--text-3); background: var(--surface-2); animation: none; }
+/* 진입 모드 카드 */
+.mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mode-card { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+  padding: 26px 18px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-2);
+  cursor: pointer; transition: border-color .12s, background .12s, transform .06s; color: var(--text); }
+.mode-card:hover { border-color: var(--accent); background: var(--accent-weak); }
+.mode-card:active { transform: scale(.99); }
+.mode-card.sel { border-color: var(--accent); background: var(--accent-weak); }
+.mode-card .ic { font-size: 32px; }
+.mode-card b { font-size: 15px; }
+.mode-card span { color: var(--text-3); font-size: 12px; line-height: 1.5; }
+.mode-card code { background: var(--hover); padding: 1px 5px; border-radius: 5px; font-family: var(--mono); font-size: 11px; }
 
 /* ---- 버튼 ---- */
 .btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 13px;

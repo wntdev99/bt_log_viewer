@@ -42,11 +42,11 @@
         movePlayhead(store.state.idx);
       }
       function movePlayhead(idx) {
-        const s = store.active, ph = wrap.querySelector('#gph'); if (!s || !ph) return;
+        const s = store.active, ph = wrap.querySelector('#gph'); if (!s || !ph || !s.timeline.length || !s.timeline[idx]) return;
         const x = (s.timeline[idx][0] - s.meta.t0) / Math.max(1, s.meta.t1 - s.meta.t0) * W;
         ph.setAttribute('x1', x); ph.setAttribute('x2', x);
       }
-      store.on('load', build); store.on('render', movePlayhead);
+      store.on('load', build); store.on('grow', build); store.on('render', movePlayhead);
       build();
     },
   });

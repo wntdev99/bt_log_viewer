@@ -45,7 +45,7 @@
         if (target) { target.style.background = 'var(--accent-weak)'; target.scrollIntoView({ block: 'nearest' }); }
       }
       q.oninput = rebuild; sf.onchange = rebuild;
-      store.on('load', rebuild); store.on('render', highlight);
+      store.on('load', rebuild); store.on('grow', rebuild); store.on('render', highlight);
       rebuild();
     },
   });

@@ -25,6 +25,7 @@
       <select class="select" id="sessionSel"></select></label>
     <button class="btn" id="mergeBtn" style="display:none" title="로드된 세션을 통합 타임라인으로 병합">⛓ 합쳐보기</button>
     <span class="topbar-spacer"></span>
+    <button class="live-chip" id="liveChip" style="display:none" title="클릭=최신 추종 켜기/끄기">● LIVE</button>
     <span class="meta-chip" id="metaChip"></span>
     <button class="btn ghost" id="paletteBtn" title="명령 팔레트 (⌘K)">⌘K</button>
     <button class="btn icon ghost" id="orientBtn" title="트리 방향 전환: 좌우 ↔ 위아래 (o)">↔</button>
@@ -81,6 +82,30 @@
     </div>
     <div class="tick-readout" id="tickReadout"></div>
   </footer>
+</div>
+
+<!-- 진입 모드 선택 -->
+<div class="overlay" id="landing">
+  <div class="sheet" style="width:640px">
+    <header><span class="logo" style="width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#3182F6,#1B64DA);display:inline-grid;place-items:center;color:#fff">BT</span>
+      Flow Viewer <span class="muted" style="font-weight:400;font-size:12px">— 시작 방식을 선택하세요</span></header>
+    <div class="body" style="padding:18px">
+      <div class="mode-grid">
+        <button class="mode-card" id="modeRecord">
+          <div class="ic">📁</div><b>녹화본 재생</b>
+          <span>저장된 <code>.btlog</code> / <code>.session.json</code> 을 열어<br>시간축으로 되감아 분석</span></button>
+        <button class="mode-card" id="modeLive">
+          <div class="ic">🔴</div><b>실시간 추적</b>
+          <span>로컬에서 기록 중인 <code>.btlog</code> 의 경로를 지정해<br>자라나는 전이를 실시간으로 따라가기</span></button>
+      </div>
+      <div id="liveForm" style="display:none;margin-top:14px">
+        <div class="row" style="gap:8px">
+          <input class="input" id="livePath" placeholder="/tmp/bt_execution.btlog" style="flex:1">
+          <button class="btn primary" id="liveConnect">연결</button></div>
+        <div class="muted" id="liveHint" style="margin-top:8px;line-height:1.6"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- 설정 시트 (디버그 토글) -->

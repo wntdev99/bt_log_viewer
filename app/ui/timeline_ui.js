@@ -7,9 +7,11 @@
 
   function $id(id) { return document.getElementById(id); }
   function stop() { if (timer) clearInterval(timer); timer = null; store.state.playing = false; $.play.innerHTML = '▶'; $.play.title = '재생 (Space)'; }
+  function pauseFollow() { if (store.state.live && store.state.follow) store.setFollow(false); }
   function play() {
     if (timer) { stop(); return; }
     const s = store.active; if (!s || !s.timeline.length) return;
+    pauseFollow();                        // 실시간 중 재생=과거 구간 스크럽 → 추종 정지
     store.state.playing = true; $.play.innerHTML = '⏸'; $.play.title = '일시정지 (Space)';
     const mode = store.state.mode, speed = store.state.speed, max = s.timeline.length - 1;
     if (mode === 'tick') {
@@ -38,6 +40,7 @@
   }
   function updateReadout(idx) {
     const s = store.active; if (!s) return;
+    if (!s.timeline.length) { $.tl.textContent = '0 / 0   ·   대기 중'; $.readout.textContent = ''; return; }
     $.scrub.value = idx;
     $.tl.textContent = `${idx} / ${s.timeline.length - 1}   ·   t+${fmtTime(s, idx)}s`;
     const tr = s.timeline[idx];
@@ -64,7 +67,7 @@
     renderLoopBand(); renderBookmarks(); updatePlayLine(store.state.idx);
   }
   function timeFrac(idx) {
-    const s = store.active; if (!s) return 0;
+    const s = store.active; if (!s || !s.timeline.length || !s.timeline[idx]) return 0;
     const span = Math.max(1, s.meta.t1 - s.meta.t0);
     return (s.timeline[idx][0] - s.meta.t0) / span;
   }
@@ -108,10 +111,10 @@
       density: $id('density'), densitySvg: $id('densitySvg') };
 
     $.play.onclick = play;
-    $.rew.onclick = () => { stop(); store.setIdx(0); };
-    $.stepb.onclick = () => { stop(); store.stepIdx(-1); };
-    $.stepf.onclick = () => { stop(); store.stepIdx(1); };
-    $.scrub.oninput = () => { stop(); store.setIdx(+$.scrub.value); };
+    $.rew.onclick = () => { stop(); pauseFollow(); store.setIdx(0); };
+    $.stepb.onclick = () => { stop(); pauseFollow(); store.stepIdx(-1); };
+    $.stepf.onclick = () => { stop(); pauseFollow(); store.stepIdx(1); };
+    $.scrub.oninput = () => { stop(); pauseFollow(); store.setIdx(+$.scrub.value); };
     $.mode.onchange = () => { store.setMode($.mode.value); if (timer) { stop(); play(); } };
     $.speed.onchange = () => { store.setSpeed($.speed.value); if (timer) { stop(); play(); } };
     $.loop.onclick = cycleLoop;
@@ -119,6 +122,7 @@
     $.density.onclick = e => seekFromDensity(e.clientX);
 
     store.on('load', s => { $.scrub.max = Math.max(0, s.timeline.length - 1); renderDensity(); updateReadout(0); });
+    store.on('grow', s => { $.scrub.max = Math.max(0, s.timeline.length - 1); renderDensity(); updateReadout(store.state.idx); });
     store.on('render', idx => updateReadout(idx));
     store.on('loop', () => { renderLoopBand(); $.loop.setAttribute('aria-pressed', !!store.state.loopAB); });
     store.on('bookmarks', renderBookmarks);

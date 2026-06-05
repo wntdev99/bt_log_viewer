@@ -30,7 +30,7 @@
           </tbody></table></div>`;
         box.querySelectorAll('tr.clk').forEach(tr => tr.onclick = () => { BTV.transport.stop(); store.setIdx(+tr.dataset.i); });
       }
-      store.on('load', render); store.on('render', render);
+      store.on('load', render); store.on('render', render); store.on('grow', render);
       render();
     },
   });
